@@ -19,7 +19,6 @@ import {
   instancedArray,
   instanceIndex,
 } from "three/tsl";
-
 // Appearance enum for particle shapes
 export const Appearance = Object.freeze({
   DEFAULT: "default",
@@ -157,47 +156,56 @@ export const VFXParticles = forwardRef(function VFXParticles(
 
   // Store position prop for use in spawn
   const positionRef = useRef(position);
-  useEffect(() => { positionRef.current = position; }, [position]);
-
-  // Update uniforms when props change
-  useEffect(() => { 
-    uniforms.sizeMin.value = sizeRange[0]; 
-    uniforms.sizeMax.value = sizeRange[1]; 
-  }, [sizeRange, uniforms]);
-  useEffect(() => { uniforms.fadeSizeStart.value = fadeSize[0]; uniforms.fadeSizeEnd.value = fadeSize[1]; }, [fadeSize, uniforms]);
-  useEffect(() => { uniforms.fadeOpacityStart.value = fadeOpacity[0]; uniforms.fadeOpacityEnd.value = fadeOpacity[1]; }, [fadeOpacity, uniforms]);
-  useEffect(() => { uniforms.gravity.value.set(...gravity); }, [gravity, uniforms]);
-  useEffect(() => { uniforms.friction.value = friction; }, [friction, uniforms]);
-  useEffect(() => { 
-    uniforms.speedMin.value = speedRange[0]; 
-    uniforms.speedMax.value = speedRange[1]; 
-  }, [speedRange, uniforms]);
-  useEffect(() => { uniforms.intensity.value = intensity; }, [intensity, uniforms]);
-  useEffect(() => { 
-    uniforms.rotationMin.value = rotation[0]; 
-    uniforms.rotationMax.value = rotation[1]; 
-  }, [rotation, uniforms]);
-  useEffect(() => { 
+  
+  // Update all uniforms when props change
+  useEffect(() => {
+    positionRef.current = position;
+    
+    // Size
+    uniforms.sizeMin.value = sizeRange[0];
+    uniforms.sizeMax.value = sizeRange[1];
+    
+    // Fade
+    uniforms.fadeSizeStart.value = fadeSize[0];
+    uniforms.fadeSizeEnd.value = fadeSize[1];
+    uniforms.fadeOpacityStart.value = fadeOpacity[0];
+    uniforms.fadeOpacityEnd.value = fadeOpacity[1];
+    
+    // Physics
+    uniforms.gravity.value.set(...gravity);
+    uniforms.friction.value = friction;
+    uniforms.speedMin.value = speedRange[0];
+    uniforms.speedMax.value = speedRange[1];
+    
+    // Lifetime
     uniforms.lifetimeMin.value = lifetimeToFadeRate(lifetime[1]);
     uniforms.lifetimeMax.value = lifetimeToFadeRate(lifetime[0]);
-  }, [lifetime, uniforms]);
-  useEffect(() => { uniforms.dirMin.value.set(...directionMin); }, [directionMin, uniforms]);
-  useEffect(() => { uniforms.dirMax.value.set(...directionMax); }, [directionMax, uniforms]);
-  
-  // Update colors
-  useEffect(() => {
+    
+    // Direction
+    uniforms.dirMin.value.set(...directionMin);
+    uniforms.dirMax.value.set(...directionMax);
+    
+    // Rotation
+    uniforms.rotationMin.value = rotation[0];
+    uniforms.rotationMax.value = rotation[1];
+    
+    // Intensity
+    uniforms.intensity.value = intensity;
+    
+    // Colors
     uniforms.colorStartCount.value = colorStart.length;
+    uniforms.colorEndCount.value = colorEnd.length;
     startColors.forEach((c, i) => {
       uniforms[`colorStart${i}`]?.value.setRGB(...c);
     });
-  }, [colorStart, startColors, uniforms]);
-  
-  useEffect(() => {
-    uniforms.colorEndCount.value = colorEnd.length;
     endColors.forEach((c, i) => {
       uniforms[`colorEnd${i}`]?.value.setRGB(...c);
     });
-  }, [colorEnd, endColors, uniforms]);
+  }, [
+    position, sizeRange, fadeSize, fadeOpacity, gravity, friction, 
+    speedRange, lifetime, directionMin, directionMax, rotation, 
+    intensity, colorStart, colorEnd, startColors, endColors, uniforms
+  ]);
 
   // GPU Storage arrays
   const { positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds } = useMemo(
