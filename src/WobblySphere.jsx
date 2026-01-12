@@ -9,11 +9,13 @@ import {
     length,
     texture,
     time,
+    positionLocal,
+    normalGeometry,
 } from "three/tsl";
 import { MeshBasicNodeMaterial, Vector3 } from "three/webgpu";
 import { noiseTexture } from "./noiseTexture";
 
-const MAX_WAVES = 8;
+const MAX_WAVES = 20;
 
 const currentTimeUniform = uniform(0);
 
@@ -24,7 +26,7 @@ const waveUniforms = Array.from({ length: MAX_WAVES }, () => ({
 
 let nextWaveIndex = 0;
 let lastWaveTime = 0;
-const THROTTLE_MS = 600;
+const THROTTLE_MS = 100;
 
 const createWaveMaterial = () => {
     const mat = new MeshBasicNodeMaterial({ 
@@ -72,6 +74,7 @@ const createWaveMaterial = () => {
     const waveColor = vec3(0.4, 0.9, 1.0).mul(totalMask);
     
     mat.colorNode = waveColor;
+    mat.positionNode = positionLocal.add(waveColor);
 
     return mat;
 };
@@ -105,7 +108,7 @@ export const WobblySphere = () => {
             material={waveMaterial} 
             onPointerMove={handlePointerMove}
         >
-            <boxGeometry args={[3, 3, 3]} />
+            <sphereGeometry args={[3, 64, 64]} />
         </mesh>
     );
 };

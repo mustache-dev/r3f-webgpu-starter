@@ -5,13 +5,18 @@ import { Suspense } from "react";
 import { KeyboardControls, Loader, OrbitControls } from "@react-three/drei";
 import { WebGPUPostProcessing } from "./WebGPUPostprocessing";
 import { WobblySphere } from "./WobblySphere";
+import { Floor } from "./Floor";
+import Player from "./Player";
+import { Particles } from "./Particles";
 
 const keyboardMap = [
-  { name: "up", keys: ["KeyW", "ArrowUp"] },
-  { name: "down", keys: ["KeyS", "ArrowDown"] },
-  { name: "left", keys: ["KeyA", "ArrowLeft"] },
-  { name: "right", keys: ["KeyD", "ArrowRight"] },
-];
+  { name: "forward", keys: ["ArrowUp", "KeyW"] },
+  { name: "backward", keys: ["ArrowDown", "KeyS"] },
+  { name: "left", keys: ["ArrowLeft", "KeyA"] },
+  { name: "right", keys: ["ArrowRight", "KeyD"] },
+  { name: "run", keys: ["ShiftLeft", "ShiftRight"] },
+  { name: "attack", keys: ["KeyE"] },
+]
 
 export default function App() {
   return (
@@ -26,13 +31,14 @@ export default function App() {
             await renderer.init();
             return renderer;
           }}
-          camera={{ position: [0, 5, 15], fov: 50 }}
         >
           <Suspense fallback={null}>
             <SceneLight />
             <WebGPUPostProcessing />
-            <WobblySphere/>
-            <OrbitControls/>
+            <Floor/>
+            <Player/>
+            <Particles/>
+            {/* <WobblySphere/> */}
           </Suspense>
         </Canvas>
       </KeyboardControls>
