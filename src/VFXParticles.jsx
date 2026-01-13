@@ -23,6 +23,9 @@ import {
   sin,
   atan2,
   sqrt,
+  acos,
+  PI,
+  mx_noise_vec3,
 } from "three/tsl";
 // Appearance enum for particle shapes
 export const Appearance = Object.freeze({
@@ -37,6 +40,16 @@ export const Blending = Object.freeze({
   ADDITIVE: THREE.AdditiveBlending,
   MULTIPLY: THREE.MultiplyBlending,
   SUBTRACTIVE: THREE.SubtractiveBlending,
+});
+
+// Emitter shape types
+export const EmitterShape = Object.freeze({
+  POINT: 0,   // Single point emission
+  BOX: 1,     // Box/cube volume (uses startPositionMin/Max)
+  SPHERE: 2,  // Sphere surface or volume
+  CONE: 3,    // Cone shape (great for fire, fountains)
+  DISK: 4,    // Flat disk/circle
+  EDGE: 5,    // Line between two points
 });
 
 // Convert hex to RGB array [0-1]
@@ -111,6 +124,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
     backdropNode = null, // TSL node or function for backdrop sampling
     opacityNode = null,  // TSL node or function for custom opacity control
     emitCount = 1,
+    // Emitter shape props
+    emitterShape = EmitterShape.BOX, // Emission shape type
+    emitterRadius = [0, 1], // [inner, outer] radius for sphere/cone/disk (inner=0 for solid)
+    emitterAngle = Math.PI / 4, // Cone angle in radians (0 = line, PI/2 = hemisphere)
+    emitterHeight = [0, 1], // [min, max] height for cone
+    emitterSurfaceOnly = false, // Emit from surface only (sphere/disk)
+    emitterDirection = [0, 1, 0], // Direction for cone/disk normal
+    // Turbulence (curl noise)
+    turbulence = null, // { intensity: 0.5, frequency: 1, speed: 1 }
   },
   ref
 ) {
@@ -132,6 +154,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const lifetimeRange = useMemo(() => toRange(lifetime, [1, 2]), [lifetime]);
   const rotation3D = useMemo(() => toRotation3D(rotation), [rotation]);
   const rotationSpeed3D = useMemo(() => toRotation3D(rotationSpeed), [rotationSpeed]);
+  const emitterRadiusRange = useMemo(() => toRange(emitterRadius, [0, 1]), [emitterRadius]);
+  const emitterHeightRange = useMemo(() => toRange(emitterHeight, [0, 1]), [emitterHeight]);
 
   // Convert color arrays to RGB (support up to 8 colors each)
   const startColors = useMemo(() => {
@@ -207,6 +231,20 @@ export const VFXParticles = forwardRef(function VFXParticles(
       colorEnd5: uniform(new THREE.Color(...endColors[5])),
       colorEnd6: uniform(new THREE.Color(...endColors[6])),
       colorEnd7: uniform(new THREE.Color(...endColors[7])),
+      // Emitter shape uniforms
+      emitterShapeType: uniform(emitterShape),
+      emitterRadiusInner: uniform(emitterRadiusRange[0]),
+      emitterRadiusOuter: uniform(emitterRadiusRange[1]),
+      emitterAngle: uniform(emitterAngle),
+      emitterHeightMin: uniform(emitterHeightRange[0]),
+      emitterHeightMax: uniform(emitterHeightRange[1]),
+      emitterSurfaceOnly: uniform(emitterSurfaceOnly ? 1 : 0),
+      emitterDir: uniform(new THREE.Vector3(...emitterDirection).normalize()),
+      // Turbulence uniforms
+      turbulenceIntensity: uniform(turbulence?.intensity ?? 0),
+      turbulenceFrequency: uniform(turbulence?.frequency ?? 1),
+      turbulenceSpeed: uniform(turbulence?.speed ?? 1),
+      turbulenceTime: uniform(0), // Updated each frame
     }),
     []
   );
@@ -274,10 +312,27 @@ export const VFXParticles = forwardRef(function VFXParticles(
     endColors.forEach((c, i) => {
       uniforms[`colorEnd${i}`]?.value.setRGB(...c);
     });
+    
+    // Emitter shape
+    uniforms.emitterShapeType.value = emitterShape;
+    uniforms.emitterRadiusInner.value = emitterRadiusRange[0];
+    uniforms.emitterRadiusOuter.value = emitterRadiusRange[1];
+    uniforms.emitterAngle.value = emitterAngle;
+    uniforms.emitterHeightMin.value = emitterHeightRange[0];
+    uniforms.emitterHeightMax.value = emitterHeightRange[1];
+    uniforms.emitterSurfaceOnly.value = emitterSurfaceOnly ? 1 : 0;
+    uniforms.emitterDir.value.set(...emitterDirection).normalize();
+    
+    // Turbulence
+    uniforms.turbulenceIntensity.value = turbulence?.intensity ?? 0;
+    uniforms.turbulenceFrequency.value = turbulence?.frequency ?? 1;
+    uniforms.turbulenceSpeed.value = turbulence?.speed ?? 1;
   }, [
     position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, friction, 
-    speedRange, lifetimeRange, directionMin, directionMax, rotation3D, 
-    intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms
+    speedRange, lifetimeRange, directionMin, directionMax, rotation3D, rotationSpeed3D,
+    intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms,
+    emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
+    turbulence, startPositionMin, startPositionMax
   ]);
 
   // GPU Storage arrays
@@ -375,12 +430,134 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const randPosX = hash(particleSeed.add(5555));
         const randPosY = hash(particleSeed.add(6666));
         const randPosZ = hash(particleSeed.add(7777));
+        const randRadius = hash(particleSeed.add(8880));
+        const randTheta = hash(particleSeed.add(9990));
+        const randPhi = hash(particleSeed.add(10100));
+        const randHeight = hash(particleSeed.add(11110));
 
-        // Position at spawn point + random offset
-        const offsetX = mix(uniforms.startPosMin.x, uniforms.startPosMax.x, randPosX);
-        const offsetY = mix(uniforms.startPosMin.y, uniforms.startPosMax.y, randPosY);
-        const offsetZ = mix(uniforms.startPosMin.z, uniforms.startPosMax.z, randPosZ);
-        position.assign(uniforms.spawnPosition.add(vec3(offsetX, offsetY, offsetZ)));
+        // Calculate position based on emitter shape
+        const shapeType = uniforms.emitterShapeType;
+        const radiusInner = uniforms.emitterRadiusInner;
+        const radiusOuter = uniforms.emitterRadiusOuter;
+        const coneAngle = uniforms.emitterAngle;
+        const heightMin = uniforms.emitterHeightMin;
+        const heightMax = uniforms.emitterHeightMax;
+        const surfaceOnly = uniforms.emitterSurfaceOnly;
+        const emitDir = uniforms.emitterDir;
+
+        // Theta: full rotation around Y axis (0 to 2*PI)
+        const theta = randTheta.mul(PI.mul(2));
+        
+        // For sphere: phi is the vertical angle (0 to PI for full sphere)
+        // Using acos for uniform distribution on sphere surface
+        const phi = acos(float(1).sub(randPhi.mul(2)));
+        
+        // Radius interpolation (inner to outer, with optional surface-only)
+        // For volume: use cube root for uniform volume distribution
+        // For surface: use outer radius only
+        const radiusT = surfaceOnly.greaterThan(0.5).select(
+          float(1),
+          randRadius.pow(float(1).div(3)) // Cube root for uniform volume
+        );
+        const radius = mix(radiusInner, radiusOuter, radiusT);
+
+        // === SHAPE CALCULATIONS ===
+        
+        // Pre-compute rotation values for emitDir (rotate from Y-up to emitDir)
+        // Dot product with Y axis
+        const cosAngle = emitDir.y;
+        // Cross product: (0,1,0) × emitDir = (-emitDir.z, 0, emitDir.x)
+        const axisX = emitDir.z.negate();
+        const axisZ = emitDir.x;
+        const axisLenSq = axisX.mul(axisX).add(axisZ.mul(axisZ));
+        const axisLen = sqrt(axisLenSq.max(0.0001)); // Avoid division by zero
+        const kx = axisX.div(axisLen);
+        const kz = axisZ.div(axisLen);
+        const sinAngle = axisLen;
+        const oneMinusCos = float(1).sub(cosAngle);
+        
+        // Helper: rotate a vector from Y-up to align with emitDir
+        // Using Rodrigues' rotation formula simplified for rotating from (0,1,0)
+        const rotateToEmitDir = (localPos) => {
+          // k × localPos where k = (kx, 0, kz)
+          const crossX = kz.mul(localPos.y).negate();
+          const crossY = kz.mul(localPos.x).sub(kx.mul(localPos.z));
+          const crossZ = kx.mul(localPos.y);
+          
+          // k · localPos
+          const kDotV = kx.mul(localPos.x).add(kz.mul(localPos.z));
+          
+          // Rodrigues rotation
+          const rotatedX = localPos.x.mul(cosAngle).add(crossX.mul(sinAngle)).add(kx.mul(kDotV).mul(oneMinusCos));
+          const rotatedY = localPos.y.mul(cosAngle).add(crossY.mul(sinAngle));
+          const rotatedZ = localPos.z.mul(cosAngle).add(crossZ.mul(sinAngle)).add(kz.mul(kDotV).mul(oneMinusCos));
+          
+          // If emitDir is nearly parallel to Y, use simpler logic
+          return cosAngle.greaterThan(0.999).select(
+            localPos,
+            cosAngle.lessThan(-0.999).select(
+              vec3(localPos.x, localPos.y.negate(), localPos.z),
+              vec3(rotatedX, rotatedY, rotatedZ)
+            )
+          );
+        };
+        
+        // BOX (shape 1): use startPositionMin/Max
+        const boxOffsetX = mix(uniforms.startPosMin.x, uniforms.startPosMax.x, randPosX);
+        const boxOffsetY = mix(uniforms.startPosMin.y, uniforms.startPosMax.y, randPosY);
+        const boxOffsetZ = mix(uniforms.startPosMin.z, uniforms.startPosMax.z, randPosZ);
+        const boxPos = vec3(boxOffsetX, boxOffsetY, boxOffsetZ);
+        
+        // SPHERE (shape 2): spherical coordinates
+        const sphereX = radius.mul(sin(phi)).mul(cos(theta));
+        const sphereY = radius.mul(cos(phi));
+        const sphereZ = radius.mul(sin(phi)).mul(sin(theta));
+        const spherePos = vec3(sphereX, sphereY, sphereZ);
+        
+        // CONE (shape 3): emit within cone angle, with height
+        // Cone points along emitDir, angle is half-angle from center
+        const coneH = mix(heightMin, heightMax, randHeight);
+        const coneR = coneH.mul(sin(coneAngle)).mul(radiusT);
+        const coneLocalX = coneR.mul(cos(theta));
+        const coneLocalY = coneH.mul(cos(coneAngle));
+        const coneLocalZ = coneR.mul(sin(theta));
+        const conePos = rotateToEmitDir(vec3(coneLocalX, coneLocalY, coneLocalZ));
+        
+        // DISK (shape 4): flat circle on XZ plane, then rotated to emitDir
+        const diskR = surfaceOnly.greaterThan(0.5).select(
+          radiusOuter,
+          mix(radiusInner, radiusOuter, sqrt(randRadius)) // sqrt for uniform area distribution
+        );
+        const diskLocalX = diskR.mul(cos(theta));
+        const diskLocalZ = diskR.mul(sin(theta));
+        // Disk is in XZ plane (Y=0), rotate so Y-up becomes emitDir
+        const diskPos = rotateToEmitDir(vec3(diskLocalX, float(0), diskLocalZ));
+        
+        // EDGE (shape 5): line between startPosMin and startPosMax
+        const edgeT = randPosX;
+        const edgePos = vec3(
+          mix(uniforms.startPosMin.x, uniforms.startPosMax.x, edgeT),
+          mix(uniforms.startPosMin.y, uniforms.startPosMax.y, edgeT),
+          mix(uniforms.startPosMin.z, uniforms.startPosMax.z, edgeT)
+        );
+        
+        // POINT (shape 0): no offset
+        const pointPos = vec3(0, 0, 0);
+        
+        // Select position based on shape type
+        const shapeOffset = shapeType.lessThan(0.5).select(pointPos,        // 0: POINT
+          shapeType.lessThan(1.5).select(boxPos,                             // 1: BOX
+            shapeType.lessThan(2.5).select(spherePos,                        // 2: SPHERE
+              shapeType.lessThan(3.5).select(conePos,                        // 3: CONE
+                shapeType.lessThan(4.5).select(diskPos,                      // 4: DISK
+                  edgePos                                                     // 5: EDGE
+                )
+              )
+            )
+          )
+        );
+        
+        position.assign(uniforms.spawnPosition.add(shapeOffset));
 
         // Random direction (handle zero vector to avoid NaN from normalize)
         const dirX = mix(uniforms.dirMin.x, uniforms.dirMax.x, randDirX);
@@ -448,6 +625,47 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // Gravity scaled down by 0.02 for more intuitive values (0.05 prop ≈ 0.001 internal)
         velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001));
         velocity.mulAssign(uniforms.friction.pow(dt60));
+        
+        // Curl noise turbulence
+        const turbIntensity = uniforms.turbulenceIntensity;
+        const turbFreq = uniforms.turbulenceFrequency;
+        const turbTime = uniforms.turbulenceTime;
+        
+        // Only apply if turbulence intensity > 0
+        If(turbIntensity.greaterThan(0.001), () => {
+          // Sample position in noise space (scaled by frequency, offset by time)
+          const noisePos = position.mul(turbFreq).add(vec3(turbTime, turbTime.mul(0.7), turbTime.mul(1.3)));
+          
+          // Compute curl of noise field using finite differences
+          // curl(F) = (dFz/dy - dFy/dz, dFx/dz - dFz/dx, dFy/dx - dFx/dy)
+          const eps = float(0.01); // Small offset for derivatives
+          
+          // Sample noise at offset positions for partial derivatives
+          const nPosX = mx_noise_vec3(noisePos.add(vec3(eps, 0, 0)));
+          const nNegX = mx_noise_vec3(noisePos.sub(vec3(eps, 0, 0)));
+          const nPosY = mx_noise_vec3(noisePos.add(vec3(0, eps, 0)));
+          const nNegY = mx_noise_vec3(noisePos.sub(vec3(0, eps, 0)));
+          const nPosZ = mx_noise_vec3(noisePos.add(vec3(0, 0, eps)));
+          const nNegZ = mx_noise_vec3(noisePos.sub(vec3(0, 0, eps)));
+          
+          // Compute partial derivatives
+          const dFx_dy = nPosY.x.sub(nNegY.x).div(eps.mul(2));
+          const dFx_dz = nPosZ.x.sub(nNegZ.x).div(eps.mul(2));
+          const dFy_dx = nPosX.y.sub(nNegX.y).div(eps.mul(2));
+          const dFy_dz = nPosZ.y.sub(nNegZ.y).div(eps.mul(2));
+          const dFz_dx = nPosX.z.sub(nNegX.z).div(eps.mul(2));
+          const dFz_dy = nPosY.z.sub(nNegY.z).div(eps.mul(2));
+          
+          // Curl = (dFz/dy - dFy/dz, dFx/dz - dFz/dx, dFy/dx - dFx/dy)
+          const curlX = dFz_dy.sub(dFy_dz);
+          const curlY = dFx_dz.sub(dFz_dx);
+          const curlZ = dFy_dx.sub(dFx_dy);
+          const curl = vec3(curlX, curlY, curlZ);
+          
+          // Add curl force to velocity (scaled by intensity and deltaTime)
+          velocity.addAssign(curl.mul(turbIntensity).mul(uniforms.deltaTime));
+        });
+        
         position.addAssign(velocity.mul(dt60));
         
         // Calculate rotation speed per-particle using hash (consistent per particle)
@@ -705,6 +923,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     // Update deltaTime uniform for framerate independence
     uniforms.deltaTime.value = delta;
+    
+    // Update turbulence time (animated noise field)
+    const turbSpeed = turbulence?.speed ?? 1;
+    uniforms.turbulenceTime.value += delta * turbSpeed;
     
     // Update particles
     await renderer.computeAsync(computeUpdate);
