@@ -107,6 +107,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     position = [0, 0, 0],
     autoStart = false,
     delay = 0,
+    backdropNode = null, // TSL node for backdrop sampling (e.g. viewportSharedTexture())
     emitCount = 1,
   },
   ref
@@ -567,6 +568,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
       mat.blending = blending;
       mat.side = THREE.DoubleSide;
       
+      // Apply custom backdrop node if provided (for advanced effects like refraction)
+      if (backdropNode) {
+        mat.backdropNode = backdropNode;
+      }
+      
       return mat;
     } else {
       // Sprite mode (default) - uses Y rotation only for 2D sprites
@@ -580,9 +586,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
       mat.depthWrite = false;
       mat.blending = blending;
       
+      // Apply custom backdrop node if provided (for advanced effects like refraction)
+      if (backdropNode) {
+        mat.backdropNode = backdropNode;
+      }
+      
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, backdropNode]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
