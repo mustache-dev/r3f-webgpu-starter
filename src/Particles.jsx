@@ -29,11 +29,18 @@ import {
 export const Particles = () => {
     const smokeTexture = new TextureLoader().load('./smoke.png');
     const noiseTexture = new TextureLoader().load('./noise.png');
+    const { nodes: cherryBlossomPetalNodes } = useGLTF('/cherry_blossom_petal-transformed.glb')
+    const cherryBlossomPetalGeometry = useMemo(() => {
+      const geo1 = cherryBlossomPetalNodes.Object_4.geometry
+      return geo1
+    }, [cherryBlossomPetalNodes]);
     noiseTexture.wrapS = noiseTexture.wrapT = RepeatWrapping;
     noiseTexture.minFilter = noiseTexture.magFilter = LinearFilter;
     
     // Load sword model and merge geometries
     const { nodes } = useGLTF('/sword1-transformed.glb');
+
+
     const swordGeometry = useMemo(() => {
       const geo1 = nodes.Cube001.geometry
       return geo1
@@ -113,9 +120,61 @@ export const Particles = () => {
     }, []);
   return (
     <group>
+          <VFXParticles
+        autoStart={true}
+        maxParticles={100}
+        position={[-9, 0, 0]}
+        geometry={cherryBlossomPetalGeometry}
+        size={[0.2, 0.3]}
+        delay={0.1}
+        // Darker bordeaux to lighter white
+      colorStart={["#4A0E0E", "#ff0000", "#ffffff"]}
+        fadeSize={1}
+        fadeOpacity={[1, 0]}
+        gravity={[-.2, .2, 0]}
+        lifetime={4}
+        directionMin={[0, 0, 0]}
+        directionMax={[-.5, 0,0]}
+        startPositionMin={[-.3, -.3, -.3]}
+        startPositionMax={[.3, .3, .3]}
+        speed={0.01}
+        friction={1}
+        castShadow={true}
+        rotation={[[0, Math.PI * 2], [0, Math.PI * 2], [0, Math.PI * 2]]}
+        intensity={1}
+        // orientToDirection={true}
+        // intensity={10}
+        // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
+        // backdropNode={_distortionBackdrop}
+      />
+                <VFXParticles
+        autoStart={true}
+        maxParticles={1000}
+        position={[-9, 0, 0]}
+        geometry={new SphereGeometry(1, 32, 32)}
+        size={0.5}
+        delay={0.3}
+        colorStart={["#ffdd44", "#ffaa00", "#ff6600"]}
+        colorEnd={["#442200", "#221100"]}
+        fadeSize={[0.3, 1]}
+        fadeOpacity={[1, 1]}
+        gravity={[0, -.1, 0]}
+        lifetime={2}
+        directionMin={[-1, 0, -1]}
+        directionMax={[1, 0, 1]}
+        startPositionMin={[0, 0, 0]}
+        startPositionMax={[0,0,0]}
+        speed={0.005}
+        friction={1}
+        castShadow={true}
+        // orientToDirection={true}
+        // intensity={10}
+        opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
+        backdropNode={_distortionBackdrop}
+      />
             <VFXParticles
         autoStart={true}
-        maxParticles={10000}
+        maxParticles={100}
         position={[-3, 0, 0]}
         geometry={new SphereGeometry(1, 32, 32)}
         size={0.5}
@@ -140,7 +199,7 @@ export const Particles = () => {
       />
           <VFXParticles
         autoStart={true}
-        maxParticles={10000}
+        maxParticles={1090}
         position={[-6, 0, 0]}
         geometry={new SphereGeometry(1, 32, 32)}
         size={0.5}

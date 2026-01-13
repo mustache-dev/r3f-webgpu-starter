@@ -84,7 +84,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     maxParticles = 10000,
     size = [0.1, 0.3],
     colorStart = ["#ffffff"],
-    colorEnd = ["#ffffff"],
+    colorEnd = null, // If null, uses colorStart (no color transition)
     fadeSize = [1, 0],
     fadeOpacity = [1, 0],
     gravity = [0, 0.001, 0],
@@ -138,11 +138,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
     return colors;
   }, [colorStart]);
 
+  // Use colorStart if colorEnd is not provided (no color transition)
+  const effectiveColorEnd = colorEnd ?? colorStart;
+  
   const endColors = useMemo(() => {
-    const colors = colorEnd.slice(0, 8).map(hexToRgb);
+    const colors = effectiveColorEnd.slice(0, 8).map(hexToRgb);
     while (colors.length < 8) colors.push(colors[colors.length - 1] || [1, 1, 1]);
     return colors;
-  }, [colorEnd]);
+  }, [effectiveColorEnd]);
 
   // Uniforms
   const uniforms = useMemo(
@@ -178,7 +181,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       rotationMaxZ: uniform(rotation3D[2][1]),
       // Color arrays (8 colors max each)
       colorStartCount: uniform(colorStart.length),
-      colorEndCount: uniform(colorEnd.length),
+      colorEndCount: uniform(effectiveColorEnd.length),
       colorStart0: uniform(new THREE.Color(...startColors[0])),
       colorStart1: uniform(new THREE.Color(...startColors[1])),
       colorStart2: uniform(new THREE.Color(...startColors[2])),
@@ -247,7 +250,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     // Colors
     uniforms.colorStartCount.value = colorStart.length;
-    uniforms.colorEndCount.value = colorEnd.length;
+    uniforms.colorEndCount.value = effectiveColorEnd.length;
     startColors.forEach((c, i) => {
       uniforms[`colorStart${i}`]?.value.setRGB(...c);
     });
@@ -257,7 +260,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
   }, [
     position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, friction, 
     speedRange, lifetimeRange, directionMin, directionMax, rotation3D, 
-    intensity, colorStart, colorEnd, startColors, endColors, uniforms
+    intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms
   ]);
 
   // GPU Storage arrays
@@ -529,7 +532,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     if (geometry) {
       // InstancedMesh mode with custom geometry
-      const mat = new THREE.MeshBasicNodeMaterial();
+      const mat = new THREE.MeshStandardNodeMaterial();
       
       // Scale local position and add particle world position
       const scale = particleSize.mul(sizeMultiplier);
