@@ -142,6 +142,7 @@ export const Particles = () => {
         castShadow={true}
         rotation={[[0, Math.PI * 2], [0, Math.PI * 2], [0, Math.PI * 2]]}
         intensity={1}
+        rotationSpeed={[1, 3]}
         // orientToDirection={true}
         // intensity={10}
         // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}

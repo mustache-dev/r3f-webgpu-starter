@@ -99,6 +99,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     alphaMap = null,
     flipbook = null, // { rows: 4, columns: 8 }
     rotation = [0, 0], // [min, max] in radians
+    rotationSpeed = [0, 0], // [min, max] rotation speed in radians/second
     geometry = null, // Custom geometry (e.g. new THREE.SphereGeometry(0.5, 8, 8))
     orientToDirection = false, // Rotate geometry to face velocity direction (geometry mode only)
     castShadow = false,
@@ -130,6 +131,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const fadeOpacityRange = useMemo(() => toRange(fadeOpacity, [1, 0]), [fadeOpacity]);
   const lifetimeRange = useMemo(() => toRange(lifetime, [1, 2]), [lifetime]);
   const rotation3D = useMemo(() => toRotation3D(rotation), [rotation]);
+  const rotationSpeed3D = useMemo(() => toRotation3D(rotationSpeed), [rotationSpeed]);
 
   // Convert color arrays to RGB (support up to 8 colors each)
   const startColors = useMemo(() => {
@@ -179,6 +181,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
       rotationMaxY: uniform(rotation3D[1][1]),
       rotationMinZ: uniform(rotation3D[2][0]),
       rotationMaxZ: uniform(rotation3D[2][1]),
+      // 3D rotation speed ranges (radians/second)
+      rotationSpeedMinX: uniform(rotationSpeed3D[0][0]),
+      rotationSpeedMaxX: uniform(rotationSpeed3D[0][1]),
+      rotationSpeedMinY: uniform(rotationSpeed3D[1][0]),
+      rotationSpeedMaxY: uniform(rotationSpeed3D[1][1]),
+      rotationSpeedMinZ: uniform(rotationSpeed3D[2][0]),
+      rotationSpeedMaxZ: uniform(rotationSpeed3D[2][1]),
       // Color arrays (8 colors max each)
       colorStartCount: uniform(colorStart.length),
       colorEndCount: uniform(effectiveColorEnd.length),
@@ -244,6 +253,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.rotationMaxY.value = rotation3D[1][1];
     uniforms.rotationMinZ.value = rotation3D[2][0];
     uniforms.rotationMaxZ.value = rotation3D[2][1];
+    
+    // 3D Rotation Speed
+    uniforms.rotationSpeedMinX.value = rotationSpeed3D[0][0];
+    uniforms.rotationSpeedMaxX.value = rotationSpeed3D[0][1];
+    uniforms.rotationSpeedMinY.value = rotationSpeed3D[1][0];
+    uniforms.rotationSpeedMaxY.value = rotationSpeed3D[1][1];
+    uniforms.rotationSpeedMinZ.value = rotationSpeed3D[2][0];
+    uniforms.rotationSpeedMaxZ.value = rotationSpeed3D[2][1];
     
     // Intensity
     uniforms.intensity.value = intensity;
@@ -422,6 +439,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       const velocity = velocities.element(instanceIndex);
       const lifetime = lifetimes.element(instanceIndex);
       const fadeRate = fadeRates.element(instanceIndex);
+      const particleRotation = particleRotations.element(instanceIndex);
       // Normalized delta: 1.0 at 60fps, 0.5 at 120fps, 2.0 at 30fps
       const dt60 = uniforms.deltaTime.mul(60);
 
@@ -431,6 +449,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
         velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001));
         velocity.mulAssign(uniforms.friction.pow(dt60));
         position.addAssign(velocity.mul(dt60));
+        
+        // Calculate rotation speed per-particle using hash (consistent per particle)
+        const idx = float(instanceIndex);
+        const rotSpeedX = mix(uniforms.rotationSpeedMinX, uniforms.rotationSpeedMaxX, hash(idx.add(8888)));
+        const rotSpeedY = mix(uniforms.rotationSpeedMinY, uniforms.rotationSpeedMaxY, hash(idx.add(9999)));
+        const rotSpeedZ = mix(uniforms.rotationSpeedMinZ, uniforms.rotationSpeedMaxZ, hash(idx.add(10101)));
+        
+        // Apply rotation speed (radians/second * deltaTime)
+        particleRotation.addAssign(vec3(rotSpeedX, rotSpeedY, rotSpeedZ).mul(uniforms.deltaTime));
+        
         // fadeRate is per-second, multiply by actual deltaTime
         lifetime.subAssign(fadeRate.mul(uniforms.deltaTime));
 
@@ -440,7 +468,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
         });
       });
     })().compute(maxParticles);
-  }, [maxParticles, positions, velocities, lifetimes, fadeRates, uniforms]);
+  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleRotations, uniforms]);
 
   // Material (either Sprite or Mesh material based on geometry prop)
   const material = useMemo(() => {
