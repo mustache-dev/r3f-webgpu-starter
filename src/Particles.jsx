@@ -1,9 +1,20 @@
+import { useMemo } from "react";
 import { VFXParticles, Appearance, Blending } from "./VFXParticles";
-import { TextureLoader } from "three/webgpu";
+import { TextureLoader, BoxGeometry } from "three/webgpu";
+import { useGLTF } from "@react-three/drei";
+import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
 export const Particles = () => {
-
     const smokeTexture = new TextureLoader().load('./smoke.png');
+    
+    // Load sword model and merge geometries
+    const { nodes } = useGLTF('/sword1-transformed.glb');
+    const swordGeometry = useMemo(() => {
+      const geo1 = nodes.Cube001.geometry
+      
+    
+      return geo1
+    }, [nodes]);
   return (
     <group>
       <VFXParticles
@@ -92,6 +103,57 @@ export const Particles = () => {
         // emitCount={500}
       />
 
+
+      <VFXParticles
+        autoStart={true}
+        maxParticles={500}
+        position={[12, -1, 0]}
+        geometry={new BoxGeometry(1, 1, 1)}
+        size={[0.1, 0.2]}
+        colorStart={["#ff00ff", "#aa00ff", "#ff66ff"]}
+        colorEnd={["#440044", "#220022"]}
+        fadeSize={1}          // Single value = no randomness
+        fadeOpacity={1}       // Single value = no randomness
+        gravity={[0, -2, 0]}
+        lifetime={[1, 2]}
+        directionMin={[-0.5, 0.5, -0.5]}
+        directionMax={[0.5, 1, 0.5]}
+        speed={[0.05, 0.1]}
+        friction={0.98}
+        castShadow={true}
+        // Full 3D rotation: [[minX, maxX], [minY, maxY], [minZ, maxZ]]
+        rotation={[[0, Math.PI * 2], [0, Math.PI * 2], [0, Math.PI * 2]]}
+      /> 
+
+
+
+      {/* Sword geometry particles - orient to velocity */}
+      <VFXParticles
+        autoStart={true}
+        maxParticles={10000}
+        position={[15, 0, 0]}
+        geometry={swordGeometry}
+        size={0.5}
+        delay={0.}
+        colorStart={["#ffdd44", "#ffaa00", "#ff6600"]}
+        colorEnd={["#442200", "#221100"]}
+        fadeSize={1}
+        fadeOpacity={[0, 1]}
+        gravity={[0, -1, 0]}
+        lifetime={[2, 4]}
+        directionMin={[0, 0, -.1]}
+        directionMax={[0, 0, -1]}
+        startPositionMin={[-1, -1, -1]}
+        startPositionMax={[1, 1, 1]}
+        speed={0.6}
+        friction={0.98}
+        castShadow={true}
+        orientToDirection={true}
+        intensity={10}
+      />
+
     </group>
   );
 };
+
+useGLTF.preload('/sword1-transformed.glb');

@@ -18,6 +18,11 @@ import {
   texture,
   instancedArray,
   instanceIndex,
+  positionLocal,
+  cos,
+  sin,
+  atan2,
+  sqrt,
 } from "three/tsl";
 // Appearance enum for particle shapes
 export const Appearance = Object.freeze({
@@ -44,6 +49,36 @@ const hexToRgb = (hex) => {
   ] : [1, 1, 1];
 };
 
+// Normalize a prop to [min, max] array - if single value, use same for both
+const toRange = (value, defaultVal = [0, 0]) => {
+  if (value === undefined || value === null) return defaultVal;
+  if (Array.isArray(value)) return value.length === 2 ? value : [value[0], value[0]];
+  return [value, value];
+};
+
+// Normalize rotation prop - supports:
+// - Single number: rotation={0.5} → same rotation for all
+// - [min, max]: rotation={[0, Math.PI]} → random in range (Y-axis for sprites, all axes for geometry)
+// - [[minX, maxX], [minY, maxY], [minZ, maxZ]]: full 3D control
+const toRotation3D = (value) => {
+  if (value === undefined || value === null) return [[0, 0], [0, 0], [0, 0]];
+  if (typeof value === 'number') return [[value, value], [value, value], [value, value]];
+  if (Array.isArray(value)) {
+    // Check if nested array [[x], [y], [z]]
+    if (Array.isArray(value[0])) {
+      return [
+        toRange(value[0], [0, 0]),
+        toRange(value[1], [0, 0]),
+        toRange(value[2], [0, 0]),
+      ];
+    }
+    // Simple [min, max] - apply to all axes
+    const range = toRange(value, [0, 0]);
+    return [range, range, range];
+  }
+  return [[0, 0], [0, 0], [0, 0]];
+};
+
 export const VFXParticles = forwardRef(function VFXParticles(
   {
     maxParticles = 10000,
@@ -56,12 +91,17 @@ export const VFXParticles = forwardRef(function VFXParticles(
     lifetime = [1, 2],
     directionMin = [-1, 0, -1],
     directionMax = [1, 1, 1],
+    startPositionMin = [0, 0, 0],
+    startPositionMax = [0, 0, 0],
     speed = [0.1, 0.1],
     friction = 0.99,
     appearance = Appearance.GRADIENT,
     alphaMap = null,
     flipbook = null, // { rows: 4, columns: 8 }
     rotation = [0, 0], // [min, max] in radians
+    geometry = null, // Custom geometry (e.g. new THREE.SphereGeometry(0.5, 8, 8))
+    orientToDirection = false, // Rotate geometry to face velocity direction (geometry mode only)
+    castShadow = false,
     blending = Blending.NORMAL,
     intensity = 1,
     position = [0, 0, 0],
@@ -81,17 +121,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
   // Convert lifetime in seconds to fade rate per second (framerate independent)
   const lifetimeToFadeRate = (seconds) => 1 / seconds;
 
-  // Normalize size prop to array
-  const sizeRange = useMemo(() => {
-    if (Array.isArray(size)) return size;
-    return [size, size];
-  }, [size]);
-
-  // Normalize speed prop to array
-  const speedRange = useMemo(() => {
-    if (Array.isArray(speed)) return speed;
-    return [speed, speed];
-  }, [speed]);
+  // Normalize props to [min, max] ranges
+  const sizeRange = useMemo(() => toRange(size, [0.1, 0.3]), [size]);
+  const speedRange = useMemo(() => toRange(speed, [0.1, 0.1]), [speed]);
+  const fadeSizeRange = useMemo(() => toRange(fadeSize, [1, 0]), [fadeSize]);
+  const fadeOpacityRange = useMemo(() => toRange(fadeOpacity, [1, 0]), [fadeOpacity]);
+  const lifetimeRange = useMemo(() => toRange(lifetime, [1, 2]), [lifetime]);
+  const rotation3D = useMemo(() => toRotation3D(rotation), [rotation]);
 
   // Convert color arrays to RGB (support up to 8 colors each)
   const startColors = useMemo(() => {
@@ -111,26 +147,33 @@ export const VFXParticles = forwardRef(function VFXParticles(
     () => ({
       sizeMin: uniform(sizeRange[0]),
       sizeMax: uniform(sizeRange[1]),
-      fadeSizeStart: uniform(fadeSize[0]),
-      fadeSizeEnd: uniform(fadeSize[1]),
-      fadeOpacityStart: uniform(fadeOpacity[0]),
-      fadeOpacityEnd: uniform(fadeOpacity[1]),
+      fadeSizeStart: uniform(fadeSizeRange[0]),
+      fadeSizeEnd: uniform(fadeSizeRange[1]),
+      fadeOpacityStart: uniform(fadeOpacityRange[0]),
+      fadeOpacityEnd: uniform(fadeOpacityRange[1]),
       gravity: uniform(new THREE.Vector3(...gravity)),
       friction: uniform(friction),
       speedMin: uniform(speedRange[0]),
       speedMax: uniform(speedRange[1]),
-      lifetimeMin: uniform(lifetimeToFadeRate(lifetime[1])),
-      lifetimeMax: uniform(lifetimeToFadeRate(lifetime[0])),
+      lifetimeMin: uniform(lifetimeToFadeRate(lifetimeRange[1])),
+      lifetimeMax: uniform(lifetimeToFadeRate(lifetimeRange[0])),
       deltaTime: uniform(1/60), // Will be updated each frame
       dirMin: uniform(new THREE.Vector3(...directionMin)),
       dirMax: uniform(new THREE.Vector3(...directionMax)),
+      startPosMin: uniform(new THREE.Vector3(...startPositionMin)),
+      startPosMax: uniform(new THREE.Vector3(...startPositionMax)),
       spawnPosition: uniform(new THREE.Vector3(...position)),
       spawnIndexStart: uniform(0),
       spawnIndexEnd: uniform(0),
       spawnSeed: uniform(0),
       intensity: uniform(intensity),
-      rotationMin: uniform(rotation[0]),
-      rotationMax: uniform(rotation[1]),
+      // 3D rotation ranges
+      rotationMinX: uniform(rotation3D[0][0]),
+      rotationMaxX: uniform(rotation3D[0][1]),
+      rotationMinY: uniform(rotation3D[1][0]),
+      rotationMaxY: uniform(rotation3D[1][1]),
+      rotationMinZ: uniform(rotation3D[2][0]),
+      rotationMaxZ: uniform(rotation3D[2][1]),
       // Color arrays (8 colors max each)
       colorStartCount: uniform(colorStart.length),
       colorEndCount: uniform(colorEnd.length),
@@ -166,10 +209,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.sizeMax.value = sizeRange[1];
     
     // Fade
-    uniforms.fadeSizeStart.value = fadeSize[0];
-    uniforms.fadeSizeEnd.value = fadeSize[1];
-    uniforms.fadeOpacityStart.value = fadeOpacity[0];
-    uniforms.fadeOpacityEnd.value = fadeOpacity[1];
+    uniforms.fadeSizeStart.value = fadeSizeRange[0];
+    uniforms.fadeSizeEnd.value = fadeSizeRange[1];
+    uniforms.fadeOpacityStart.value = fadeOpacityRange[0];
+    uniforms.fadeOpacityEnd.value = fadeOpacityRange[1];
     
     // Physics
     uniforms.gravity.value.set(...gravity);
@@ -178,16 +221,24 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.speedMax.value = speedRange[1];
     
     // Lifetime
-    uniforms.lifetimeMin.value = lifetimeToFadeRate(lifetime[1]);
-    uniforms.lifetimeMax.value = lifetimeToFadeRate(lifetime[0]);
+    uniforms.lifetimeMin.value = lifetimeToFadeRate(lifetimeRange[1]);
+    uniforms.lifetimeMax.value = lifetimeToFadeRate(lifetimeRange[0]);
     
     // Direction
     uniforms.dirMin.value.set(...directionMin);
     uniforms.dirMax.value.set(...directionMax);
     
-    // Rotation
-    uniforms.rotationMin.value = rotation[0];
-    uniforms.rotationMax.value = rotation[1];
+    // Start position offset
+    uniforms.startPosMin.value.set(...startPositionMin);
+    uniforms.startPosMax.value.set(...startPositionMax);
+    
+    // 3D Rotation
+    uniforms.rotationMinX.value = rotation3D[0][0];
+    uniforms.rotationMaxX.value = rotation3D[0][1];
+    uniforms.rotationMinY.value = rotation3D[1][0];
+    uniforms.rotationMaxY.value = rotation3D[1][1];
+    uniforms.rotationMinZ.value = rotation3D[2][0];
+    uniforms.rotationMaxZ.value = rotation3D[2][1];
     
     // Intensity
     uniforms.intensity.value = intensity;
@@ -202,8 +253,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       uniforms[`colorEnd${i}`]?.value.setRGB(...c);
     });
   }, [
-    position, sizeRange, fadeSize, fadeOpacity, gravity, friction, 
-    speedRange, lifetime, directionMin, directionMax, rotation, 
+    position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, friction, 
+    speedRange, lifetimeRange, directionMin, directionMax, rotation3D, 
     intensity, colorStart, colorEnd, startColors, endColors, uniforms
   ]);
 
@@ -215,7 +266,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       lifetimes: instancedArray(maxParticles, "float"),
       fadeRates: instancedArray(maxParticles, "float"),
       particleSizes: instancedArray(maxParticles, "float"),
-      particleRotations: instancedArray(maxParticles, "float"),
+      particleRotations: instancedArray(maxParticles, "vec3"), // X, Y, Z rotations
       particleColorStarts: instancedArray(maxParticles, "vec3"),
       particleColorEnds: instancedArray(maxParticles, "vec3"),
     }),
@@ -256,7 +307,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       lifetime.assign(float(0));
       fadeRate.assign(float(0));
       particleSize.assign(float(0));
-      particleRotation.assign(float(0));
+      particleRotation.assign(vec3(0, 0, 0));
       colorStart.assign(vec3(1, 1, 1));
       colorEnd.assign(vec3(1, 1, 1));
     })().compute(maxParticles);
@@ -296,10 +347,18 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const randColorEnd = hash(particleSeed.add(888));
         const randSize = hash(particleSeed.add(999));
         const randSpeed = hash(particleSeed.add(1111));
-        const randRotation = hash(particleSeed.add(2222));
+        const randRotationX = hash(particleSeed.add(2222));
+        const randRotationY = hash(particleSeed.add(3333));
+        const randRotationZ = hash(particleSeed.add(4444));
+        const randPosX = hash(particleSeed.add(5555));
+        const randPosY = hash(particleSeed.add(6666));
+        const randPosZ = hash(particleSeed.add(7777));
 
-        // Position at spawn point (no random offset)
-        position.assign(uniforms.spawnPosition);
+        // Position at spawn point + random offset
+        const offsetX = mix(uniforms.startPosMin.x, uniforms.startPosMax.x, randPosX);
+        const offsetY = mix(uniforms.startPosMin.y, uniforms.startPosMax.y, randPosY);
+        const offsetZ = mix(uniforms.startPosMin.z, uniforms.startPosMax.z, randPosZ);
+        position.assign(uniforms.spawnPosition.add(vec3(offsetX, offsetY, offsetZ)));
 
         // Random direction (handle zero vector to avoid NaN from normalize)
         const dirX = mix(uniforms.dirMin.x, uniforms.dirMax.x, randDirX);
@@ -322,9 +381,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const randomSize = mix(uniforms.sizeMin, uniforms.sizeMax, randSize);
         particleSize.assign(randomSize);
 
-        // Random rotation between min and max
-        const randomRotation = mix(uniforms.rotationMin, uniforms.rotationMax, randRotation);
-        particleRotation.assign(randomRotation);
+        // Random 3D rotation between min and max for each axis
+        const rotX = mix(uniforms.rotationMinX, uniforms.rotationMaxX, randRotationX);
+        const rotY = mix(uniforms.rotationMinY, uniforms.rotationMaxY, randRotationY);
+        const rotZ = mix(uniforms.rotationMinZ, uniforms.rotationMaxZ, randRotationZ);
+        particleRotation.assign(vec3(rotX, rotY, rotZ));
 
         // Pick random start color from array
         const startColorIdx = floor(randColorStart.mul(uniforms.colorStartCount));
@@ -376,15 +437,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
     })().compute(maxParticles);
   }, [maxParticles, positions, velocities, lifetimes, fadeRates, uniforms]);
 
-  // Sprite material
+  // Material (either Sprite or Mesh material based on geometry prop)
   const material = useMemo(() => {
-    const mat = new THREE.SpriteNodeMaterial();
-    
     const lifetime = lifetimes.element(instanceIndex);
     const particleSize = particleSizes.element(instanceIndex);
     const particleRotation = particleRotations.element(instanceIndex);
     const pColorStart = particleColorStarts.element(instanceIndex);
     const pColorEnd = particleColorEnds.element(instanceIndex);
+    const particlePos = positions.element(instanceIndex);
+    const particleVel = velocities.element(instanceIndex);
     
     const progress = float(1).sub(lifetime);
     
@@ -419,14 +480,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
       sampleUV = scaledUV.add(vec2(offsetX, offsetY));
     }
     
-    const dist = uv().mul(2).sub(1).length();
-    
     let shapeMask;
     
-    if (alphaMap) {
+    if (geometry) {
+      // For custom geometry, don't apply UV-based shape masking
+      shapeMask = float(1);
+    } else if (alphaMap) {
       const alphaSample = texture(alphaMap, sampleUV);
-      shapeMask = alphaSample.r
+      shapeMask = alphaSample.r;
     } else {
+      const dist = uv().mul(2).sub(1).length();
       switch (appearance) {
         case Appearance.DEFAULT:
           shapeMask = float(1);
@@ -441,27 +504,102 @@ export const VFXParticles = forwardRef(function VFXParticles(
       }
     }
     
-    mat.colorNode = vec4(
-      intensifiedColor,
-      opacityMultiplier.mul(shapeMask).mul(lifetime.greaterThan(0.001).select(float(1), float(0)))
-    );
-    mat.positionNode = positions.toAttribute();
-    mat.scaleNode = particleSize.mul(sizeMultiplier);
-    mat.rotationNode = particleRotation;
-    mat.transparent = true;
-    mat.depthWrite = false;
-    mat.blending = blending;
+    const finalOpacity = opacityMultiplier.mul(shapeMask).mul(lifetime.greaterThan(0.001).select(float(1), float(0)));
     
-    return mat;
-  }, [positions, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending]);
+    if (geometry) {
+      // InstancedMesh mode with custom geometry
+      const mat = new THREE.MeshBasicNodeMaterial();
+      
+      // Scale local position and add particle world position
+      const scale = particleSize.mul(sizeMultiplier);
+      
+      let rotX, rotY, rotZ;
+      
+      if (orientToDirection) {
+        // Calculate rotation from velocity to orient geometry along movement direction
+        // Yaw (Y rotation) - direction on XZ plane
+        rotY = atan2(particleVel.x, particleVel.z);
+        
+        // Pitch (X rotation) - vertical angle
+        const horizontalSpeed = sqrt(particleVel.x.mul(particleVel.x).add(particleVel.z.mul(particleVel.z)));
+        rotX = atan2(particleVel.y.negate(), horizontalSpeed);
+        
+        // No roll
+        rotZ = float(0);
+      } else {
+        // Use stored particle rotation
+        rotX = particleRotation.x;
+        rotY = particleRotation.y;
+        rotZ = particleRotation.z;
+      }
+      
+      // Rotation around X axis
+      const cX = cos(rotX);
+      const sX = sin(rotX);
+      const afterX = vec3(
+        positionLocal.x,
+        positionLocal.y.mul(cX).sub(positionLocal.z.mul(sX)),
+        positionLocal.y.mul(sX).add(positionLocal.z.mul(cX))
+      );
+      
+      // Rotation around Y axis
+      const cY = cos(rotY);
+      const sY = sin(rotY);
+      const afterY = vec3(
+        afterX.x.mul(cY).add(afterX.z.mul(sY)),
+        afterX.y,
+        afterX.z.mul(cY).sub(afterX.x.mul(sY))
+      );
+      
+      // Rotation around Z axis
+      const cZ = cos(rotZ);
+      const sZ = sin(rotZ);
+      const rotatedPos = vec3(
+        afterY.x.mul(cZ).sub(afterY.y.mul(sZ)),
+        afterY.x.mul(sZ).add(afterY.y.mul(cZ)),
+        afterY.z
+      );
+      
+      mat.positionNode = rotatedPos.mul(scale).add(particlePos);
+      mat.colorNode = vec4(intensifiedColor, finalOpacity);
+      mat.transparent = true;
+      mat.depthWrite = false;
+      mat.blending = blending;
+      mat.side = THREE.DoubleSide;
+      
+      return mat;
+    } else {
+      // Sprite mode (default) - uses Y rotation only for 2D sprites
+      const mat = new THREE.SpriteNodeMaterial();
+      
+      mat.colorNode = vec4(intensifiedColor, finalOpacity);
+      mat.positionNode = positions.toAttribute();
+      mat.scaleNode = particleSize.mul(sizeMultiplier);
+      mat.rotationNode = particleRotation.y; // Use Y rotation for sprites
+      mat.transparent = true;
+      mat.depthWrite = false;
+      mat.blending = blending;
+      
+      return mat;
+    }
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection]);
 
-  // Create sprite once
-  const sprite = useMemo(() => {
-    const s = new THREE.Sprite(material);
-    s.count = maxParticles;
-    s.frustumCulled = false;
-    return s;
-  }, [material, maxParticles]);
+  // Create sprite or instanced mesh based on geometry prop
+  const renderObject = useMemo(() => {
+    if (geometry) {
+      // InstancedMesh mode
+      const mesh = new THREE.InstancedMesh(geometry, material, maxParticles);
+      mesh.frustumCulled = false;
+      mesh.castShadow = castShadow;
+      return mesh;
+    } else {
+      // Sprite mode (default)
+      const s = new THREE.Sprite(material);
+      s.count = maxParticles;
+      s.frustumCulled = false;
+      return s;
+    }
+  }, [material, maxParticles, geometry, castShadow]);
 
   // Initialize on mount
   useEffect(() => {
@@ -545,5 +683,5 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms,
   }), [spawn, start, stop, emitting, renderer, computeInit, uniforms]);
 
-  return <primitive ref={spriteRef} object={sprite} />;
+  return <primitive ref={spriteRef} object={renderObject} />;
 });
