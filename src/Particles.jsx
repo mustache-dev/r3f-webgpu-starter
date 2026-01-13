@@ -7,7 +7,6 @@ import {
   viewportSharedTexture,
   screenUV,
   time,
-  texture,
   normalView,
   positionViewDirection,
   dot,
@@ -16,15 +15,15 @@ import {
   float,
   vec2,
   vec3,
-  add,
-  sub,
-  mul,
   mix,
   normalGeometry,
   clamp,
   positionWorld,
   sin,
   PI,
+  normalize,
+  max,
+  smoothstep,
 } from "three/tsl";
 
 export const Particles = () => {
@@ -40,35 +39,44 @@ export const Particles = () => {
       return geo1
     }, [nodes]);
 
-    // Fresnel distortion backdrop effect
-    // Distortion backdrop (available for use)
-    const _distortionBackdrop = useMemo(() => {
-      const t = time;
+    // Ring-based chromatic aberration distortion backdrop
+    // Now accepts { progress, lifetime } to animate over particle life
+    const _distortionBackdrop = ({ progress }) => {
       const vUv = screenUV;
-
-      const fresnelBase = abs(dot(normalView, positionViewDirection));
       
-      const fresnelPower = float(3.0);
-      const fresnelMask = pow(fresnelBase, fresnelPower);
-
-      const distortionStrength = float(0.1);
-
-      const noiseUv1 = add(mul(vUv, float(2.0)), vec2(0, mul(t.oneMinus(), float(-0.3))));
-      const noiseUv2 = add(
-        mul(vUv, float(3.0)),
-        vec2(mul(t, float(0.1)), mul(t, float(-0.5)))
-      );
-
-      const noise1 = texture(noiseTexture, noiseUv1).r;
-      const noise2 = texture(noiseTexture, noiseUv2).r;
-
-      const combinedNoise = sub(mul(add(noise1, noise2), float(0.5)), float(0.5));
-
-      const offset = mul(mul(combinedNoise, distortionStrength), fresnelMask);
-      const distortedUv = add(vUv, vec2(offset, offset));
-
-      return viewportSharedTexture(distortedUv).rgb;
-    }, [noiseTexture]);
+      // Parameters
+      const fresnelPower = float(2.0);
+      const ringCount = float(5.0);
+      const distortionStrength = float(0.08);
+      
+      // Animate effect intensity based on progress (0 at spawn → 1 at death)
+      // Use smoothstep for smooth ramp-up: no effect at 0, full effect after 0.3
+      const effectIntensity = progress.smoothstep(float(0), float(0.3));
+      
+      // Fresnel effect
+      const fresnelDot = max(dot(normalize(positionViewDirection), normalize(normalView)), float(0));
+      const fresnel = pow(float(1).sub(fresnelDot), fresnelPower);
+      
+      // Multiple rings using sin - ring count increases with progress
+      const animatedRingCount = ringCount.mul(effectIntensity);
+      const ringsRaw = sin(fresnel.mul(animatedRingCount).mul(PI));
+      const rings = abs(ringsRaw).mul(effectIntensity); // Also fade in ring intensity
+      
+      // Distortion based on fresnel direction
+      const distortDir = normalize(vUv.sub(vec2(0.5, 0.5)));
+      const distortion = distortDir.mul(rings).mul(distortionStrength);
+      
+      // Chromatic aberration - sample R, G, B at different offsets
+      const distortedUvR = vUv.add(distortion.mul(1.2));
+      const distortedUvG = vUv.add(distortion);
+      const distortedUvB = vUv.add(distortion.mul(0.8));
+      
+      const r = viewportSharedTexture(distortedUvR).r;
+      const g = viewportSharedTexture(distortedUvG).g;
+      const b = viewportSharedTexture(distortedUvB).b;
+      
+      return vec3(r, g, b);
+    };
 
     const stylizedSphereBackdrop = useMemo(() => {
       // Fresnel: 0 at center, 1 at edges (inverted from before)
@@ -114,10 +122,10 @@ export const Particles = () => {
         delay={0.3}
         colorStart={["#ffdd44", "#ffaa00", "#ff6600"]}
         colorEnd={["#442200", "#221100"]}
-        fadeSize={1}
+        fadeSize={[0, 1]}
         fadeOpacity={[1, 1]}
         gravity={[0, 0, 0]}
-        lifetime={[2, 4]}
+        lifetime={2}
         directionMin={[-1, -1, -1]}
         directionMax={[1, 1, 1]}
         startPositionMin={[0, 0, 0]}
@@ -127,6 +135,7 @@ export const Particles = () => {
         castShadow={true}
         // orientToDirection={true}
         // intensity={10}
+        opacityNode={({progress}) => smoothstep(0, 0.1, progress.oneMinus())}
         backdropNode={_distortionBackdrop}
       />
           <VFXParticles

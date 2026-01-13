@@ -107,7 +107,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     position = [0, 0, 0],
     autoStart = false,
     delay = 0,
-    backdropNode = null, // TSL node for backdrop sampling (e.g. viewportSharedTexture())
+    backdropNode = null, // TSL node or function for backdrop sampling
+    opacityNode = null,  // TSL node or function for custom opacity control
     emitCount = 1,
   },
   ref
@@ -505,7 +506,26 @@ export const VFXParticles = forwardRef(function VFXParticles(
       }
     }
     
-    const finalOpacity = opacityMultiplier.mul(shapeMask).mul(lifetime.greaterThan(0.001).select(float(1), float(0)));
+    const baseOpacity = opacityMultiplier.mul(shapeMask).mul(lifetime.greaterThan(0.001).select(float(1), float(0)));
+    
+    // Particle data object for function-based nodes
+    const particleData = {
+      progress,           // 0→1 over lifetime
+      lifetime,           // 1→0 over lifetime (inverse of progress)
+      position: particlePos,  // vec3 world position
+      velocity: particleVel,  // vec3 velocity
+      size: particleSize,     // float size
+      rotation: particleRotation, // vec3 rotation (x, y, z)
+      colorStart: pColorStart,    // vec3 start color
+      colorEnd: pColorEnd,        // vec3 end color
+      color: currentColor,        // vec3 interpolated color
+      index: instanceIndex,       // particle index (for randomization)
+    };
+    
+    // Apply custom opacity node if provided (multiplies with base opacity)
+    const finalOpacity = opacityNode
+      ? baseOpacity.mul(typeof opacityNode === 'function' ? opacityNode(particleData) : opacityNode)
+      : baseOpacity;
     
     if (geometry) {
       // InstancedMesh mode with custom geometry
@@ -569,8 +589,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
       mat.side = THREE.DoubleSide;
       
       // Apply custom backdrop node if provided (for advanced effects like refraction)
+      // Supports both direct TSL node OR function that receives particle data
       if (backdropNode) {
-        mat.backdropNode = backdropNode;
+        mat.backdropNode = typeof backdropNode === 'function' 
+          ? backdropNode(particleData)
+          : backdropNode;
       }
       
       return mat;
@@ -587,13 +610,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
       mat.blending = blending;
       
       // Apply custom backdrop node if provided (for advanced effects like refraction)
+      // Supports both direct TSL node OR function that receives particle data
       if (backdropNode) {
-        mat.backdropNode = backdropNode;
+        mat.backdropNode = typeof backdropNode === 'function' 
+          ? backdropNode(particleData)
+          : backdropNode;
       }
       
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, backdropNode]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, backdropNode, opacityNode]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
