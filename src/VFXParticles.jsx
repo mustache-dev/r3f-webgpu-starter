@@ -1449,7 +1449,27 @@ export const VFXParticles = forwardRef(function VFXParticles(
     setEmitting(false);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup old material/renderObject when they change (not on unmount)
+  const prevMaterialRef = useRef(null);
+  const prevRenderObjectRef = useRef(null);
+  
+  useEffect(() => {
+    // Dispose previous material if it changed
+    if (prevMaterialRef.current && prevMaterialRef.current !== material) {
+      prevMaterialRef.current.dispose();
+    }
+    prevMaterialRef.current = material;
+    
+    // Dispose previous renderObject if it changed
+    if (prevRenderObjectRef.current && prevRenderObjectRef.current !== renderObject) {
+      if (prevRenderObjectRef.current.material) {
+        prevRenderObjectRef.current.material.dispose();
+      }
+    }
+    prevRenderObjectRef.current = renderObject;
+  }, [material, renderObject]);
+
+  // Cleanup on actual unmount only
   useEffect(() => {
     return () => {
       // Dispose material
@@ -1457,10 +1477,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
         material.dispose();
       }
       
-      // Dispose render object (InstancedMesh or Sprite)
+      // Dispose render object
       if (renderObject) {
         if (renderObject.geometry && !geometry) {
-          // Only dispose geometry if we created it (sprite mode)
           renderObject.geometry.dispose();
         }
         if (renderObject.material) {
@@ -1468,11 +1487,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
         }
       }
       
-      // Reset initialization state
+      // Reset initialization state only on unmount
       initialized.current = false;
       nextIndex.current = 0;
     };
-  }, [material, renderObject, geometry]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({

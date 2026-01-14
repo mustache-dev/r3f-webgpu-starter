@@ -87,7 +87,7 @@ export const Floor = () => {
             return gridColor.add(reflectionFinal);
         })();
         
-        m.colorNode = reflectionColor;
+        m.colorNode = gridColor;
  
         const zDist = abs(positionWorld.z.sub(cameraPosition.z));
         const dropAmount = zDist.mul(zDist).mul(0.008);
@@ -97,7 +97,7 @@ export const Floor = () => {
     }, [reflection]);
     
     return (
-        <mesh material={mat} position={[0, -1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh receiveShadow material={mat} position={[0, -1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
             <planeGeometry args={[100, 100, 200, 200]} />
         </mesh>
     );

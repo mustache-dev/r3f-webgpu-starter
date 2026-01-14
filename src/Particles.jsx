@@ -391,8 +391,8 @@ export const Particles = () => {
         position={[-1, 1, 0]}
         geometry={sphereGeometry}
         lighting={Lighting.STANDARD}
-        size={[0.01, 1]}
-        delay={0.1}
+        size={[0.1, 0.5]}
+        delay={0.}
         colorStart={["#ff4466", "#44ff66", "#4466ff", "#ffff44"]}
         colorEnd={["#662233", "#226633", "#223366", "#666622"]}
         fadeSize={[1, 1]}
@@ -404,11 +404,11 @@ export const Particles = () => {
         speed={0.1}
         shadow={true}
         collision={{
-          plane: { y: -2 },
+          plane: { y: -1 },
           bounce: 0.8,
           friction: 0.95,
           die: false,
-          sizeBasedGravity: 1.5,  // Larger spheres fall faster & bounce lower
+          sizeBasedGravity: 4,
         }}
       />
 
