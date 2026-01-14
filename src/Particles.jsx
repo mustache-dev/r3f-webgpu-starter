@@ -361,7 +361,7 @@ export const Particles = () => {
       /> */}
 
       {/* Sword geometry particles - orient to velocity */}
-      <VFXParticles
+      {/* <VFXParticles
         ref={swordParticlesRef}
         maxParticles={10000}
         position={[0, 0, 0]}
@@ -382,12 +382,12 @@ export const Particles = () => {
         orientToDirection={true}
         friction={{ intensity: [1., 0.], easing: "easeIn" }}
         intensity={1}
-      />
+      /> */}
 
       {/* Bouncing spheres with floor collision */}
       <VFXParticles
         autoStart={true}
-        maxParticles={500}
+        maxParticles={10000}
         position={[-1, 1, 0]}
         geometry={sphereGeometry}
         lighting={Lighting.STANDARD}
@@ -402,6 +402,7 @@ export const Particles = () => {
         direction={[[-1, 1], [0, 0.5], [-1, 1]]}
         startPosition={[[-3, 3], [0, 0], [-3, 3]]}
         speed={0.1}
+        emitCount={10}
         shadow={true}
         collision={{
           plane: { y: -1 },
