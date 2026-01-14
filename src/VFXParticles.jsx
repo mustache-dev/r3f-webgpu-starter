@@ -21,7 +21,7 @@ import {
   positionLocal,
   cos,
   sin,
-  atan2,
+  atan,
   sqrt,
   acos,
   PI,
@@ -160,7 +160,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     blending = Blending.NORMAL,
     intensity = 1,
     position = [0, 0, 0],
-    autoStart = false,
+    autoStart = true,
     delay = 0,
     backdropNode = null, // TSL node or function for backdrop sampling
     opacityNode = null,  // TSL node or function for custom opacity control
@@ -188,6 +188,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Plane collision - particles bounce or die when hitting a plane
     // { plane: { y: 0 }, bounce: 0.3, friction: 0.8, die: false, sizeBasedGravity: 0 }
     collision = null,
+    // Debug mode - shows tweakable control panel
+    debug = false,
   },
   ref
 ) {
@@ -197,6 +199,38 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const nextIndex = useRef(0);
   const [emitting, setEmitting] = useState(autoStart);
   const emitAccumulator = useRef(0);
+  
+  // Refs for runtime values that can be updated by debug panel
+  const delayRef = useRef(delay);
+  const emitCountRef = useRef(emitCount);
+  const turbulenceRef = useRef(turbulence);
+  
+  // State for "remount-required" values - changing these recreates GPU resources
+  const [activeMaxParticles, setActiveMaxParticles] = useState(maxParticles);
+  const [activeLighting, setActiveLighting] = useState(lighting);
+  const [activeAppearance, setActiveAppearance] = useState(appearance);
+  const [activeOrientToDirection, setActiveOrientToDirection] = useState(orientToDirection);
+  const [activeGeometry, setActiveGeometry] = useState(geometry);
+  const [activeShadow, setActiveShadow] = useState(shadow);
+  
+  // Keep refs in sync with props (when not in debug mode)
+  useEffect(() => {
+    delayRef.current = delay;
+    emitCountRef.current = emitCount;
+    turbulenceRef.current = turbulence;
+  }, [delay, emitCount, turbulence]);
+  
+  // Keep remount-required state in sync with props (when not in debug mode)
+  useEffect(() => {
+    if (!debug) {
+      setActiveMaxParticles(maxParticles);
+      setActiveLighting(lighting);
+      setActiveAppearance(appearance);
+      setActiveOrientToDirection(orientToDirection);
+      setActiveGeometry(geometry);
+      setActiveShadow(shadow);
+    }
+  }, [debug, maxParticles, lighting, appearance, orientToDirection, geometry, shadow]);
 
   // Convert lifetime in seconds to fade rate per second (framerate independent)
   const lifetimeToFadeRate = (seconds) => 1 / seconds;
@@ -499,16 +533,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
   // GPU Storage arrays
   const { positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds } = useMemo(
     () => ({
-      positions: instancedArray(maxParticles, "vec3"),
-      velocities: instancedArray(maxParticles, "vec3"),
-      lifetimes: instancedArray(maxParticles, "float"),
-      fadeRates: instancedArray(maxParticles, "float"),
-      particleSizes: instancedArray(maxParticles, "float"),
-      particleRotations: instancedArray(maxParticles, "vec3"), // X, Y, Z rotations
-      particleColorStarts: instancedArray(maxParticles, "vec3"),
-      particleColorEnds: instancedArray(maxParticles, "vec3"),
+      positions: instancedArray(activeMaxParticles, "vec3"),
+      velocities: instancedArray(activeMaxParticles, "vec3"),
+      lifetimes: instancedArray(activeMaxParticles, "float"),
+      fadeRates: instancedArray(activeMaxParticles, "float"),
+      particleSizes: instancedArray(activeMaxParticles, "float"),
+      particleRotations: instancedArray(activeMaxParticles, "vec3"), // X, Y, Z rotations
+      particleColorStarts: instancedArray(activeMaxParticles, "vec3"),
+      particleColorEnds: instancedArray(activeMaxParticles, "vec3"),
     }),
-    [maxParticles]
+    [activeMaxParticles]
   );
 
   // Helper to select color from array based on index
@@ -548,8 +582,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       particleRotation.assign(vec3(0, 0, 0));
       colorStart.assign(vec3(1, 1, 1));
       colorEnd.assign(vec3(1, 1, 1));
-    })().compute(maxParticles);
-  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds]);
+    })().compute(activeMaxParticles);
+  }, [activeMaxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds]);
 
   // Spawn compute shader
   const computeSpawn = useMemo(() => {
@@ -774,8 +808,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
         
         lifetime.assign(float(1));
       });
-    })().compute(maxParticles);
-  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, selectColor]);
+    })().compute(activeMaxParticles);
+  }, [activeMaxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, selectColor]);
 
   // Update particles each frame (framerate independent)
   const computeUpdate = useMemo(() => {
@@ -989,8 +1023,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
           position.y.assign(float(-1000));
         });
       });
-    })().compute(maxParticles);
-  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, uniforms]);
+    })().compute(activeMaxParticles);
+  }, [activeMaxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, uniforms]);
 
   // Material (either Sprite or Mesh material based on geometry prop)
   const material = useMemo(() => {
@@ -1037,7 +1071,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     let shapeMask;
     
-    if (geometry) {
+    if (activeGeometry) {
       // For custom geometry, don't apply UV-based shape masking
       shapeMask = float(1);
     } else if (alphaMap) {
@@ -1045,7 +1079,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       shapeMask = alphaSample.r;
     } else {
       const dist = uv().mul(2).sub(1).length();
-      switch (appearance) {
+      switch (activeAppearance) {
         case Appearance.DEFAULT:
           shapeMask = float(1);
           break;
@@ -1109,11 +1143,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
       finalOpacity = finalOpacity.mul(softFade);
     }
     
-    if (geometry) {
+    if (activeGeometry) {
       // InstancedMesh mode with custom geometry
       // Select material type based on lighting prop
       let mat;
-      switch (lighting) {
+      switch (activeLighting) {
         case Lighting.BASIC:
           mat = new THREE.MeshBasicNodeMaterial();
           break;
@@ -1131,14 +1165,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
       
       let rotX, rotY, rotZ;
       
-      if (orientToDirection) {
+      if (activeOrientToDirection) {
         // Calculate rotation from velocity to orient geometry along movement direction
         // Yaw (Y rotation) - direction on XZ plane
-        rotY = atan2(particleVel.x, particleVel.z);
+        rotY = atan(particleVel.x, particleVel.z);
         
         // Pitch (X rotation) - vertical angle
         const horizontalSpeed = sqrt(particleVel.x.mul(particleVel.x).add(particleVel.z.mul(particleVel.z)));
-        rotX = atan2(particleVel.y.negate(), horizontalSpeed);
+        rotX = atan(particleVel.y.negate(), horizontalSpeed);
         
         // No roll
         rotZ = float(0);
@@ -1239,25 +1273,25 @@ export const VFXParticles = forwardRef(function VFXParticles(
       
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, lighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, activeAppearance, alphaMap, flipbook, blending, activeGeometry, activeOrientToDirection, activeLighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
-    if (geometry) {
+    if (activeGeometry) {
       // InstancedMesh mode
-      const mesh = new THREE.InstancedMesh(geometry, material, maxParticles);
+      const mesh = new THREE.InstancedMesh(activeGeometry, material, activeMaxParticles);
       mesh.frustumCulled = false;
-      mesh.castShadow = shadow;
-      mesh.receiveShadow = shadow;
+      mesh.castShadow = activeShadow;
+      mesh.receiveShadow = activeShadow;
       return mesh;
     } else {
       // Sprite mode (default)
       const s = new THREE.Sprite(material);
-      s.count = maxParticles;
+      s.count = activeMaxParticles;
       s.frustumCulled = false;
       return s;
     }
-  }, [material, maxParticles, geometry, shadow]);
+  }, [material, activeMaxParticles, activeGeometry, activeShadow]);
 
   // Initialize on mount
   useEffect(() => {
@@ -1384,7 +1418,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     const restore = applySpawnOverrides(overrides);
 
     const startIdx = nextIndex.current;
-    const endIdx = (startIdx + count) % maxParticles;
+    const endIdx = (startIdx + count) % activeMaxParticles;
 
     uniforms.spawnPosition.value.set(x, y, z);
     uniforms.spawnIndexStart.value = startIdx;
@@ -1397,7 +1431,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     renderer.computeAsync(computeSpawn).then(() => {
       if (restore) restore();
     });
-  }, [renderer, computeSpawn, uniforms, maxParticles, applySpawnOverrides]);
+  }, [renderer, computeSpawn, uniforms, activeMaxParticles, applySpawnOverrides]);
 
   // Public spawn - uses position prop as offset, supports overrides
   // spawn(x, y, z, count, { colorStart: [...], direction: [...], ... })
@@ -1414,7 +1448,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.deltaTime.value = delta;
     
     // Update turbulence time (animated noise field)
-    const turbSpeed = turbulence?.speed ?? 1;
+    const turbSpeed = turbulenceRef.current?.speed ?? 1;
     uniforms.turbulenceTime.value += delta * turbSpeed;
     
     // Update particles
@@ -1423,17 +1457,19 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Auto emit if enabled
     if (emitting) {
       const [px, py, pz] = positionRef.current;
+      const currentDelay = delayRef.current;
+      const currentEmitCount = emitCountRef.current;
       
-      if (!delay) {
+      if (!currentDelay) {
         // delay = 0 or undefined → emit every frame
-        spawnInternal(px, py, pz, emitCount);
+        spawnInternal(px, py, pz, currentEmitCount);
       } else {
         // delay > 0 → emit every X seconds
         emitAccumulator.current += delta;
         
-        if (emitAccumulator.current >= delay) {
-          emitAccumulator.current -= delay;
-          spawnInternal(px, py, pz, emitCount);
+        if (emitAccumulator.current >= currentDelay) {
+          emitAccumulator.current -= currentDelay;
+          spawnInternal(px, py, pz, currentEmitCount);
         }
       }
     }
@@ -1506,6 +1542,390 @@ export const VFXParticles = forwardRef(function VFXParticles(
     },
     uniforms,
   }), [spawn, start, stop, emitting, renderer, computeInit, uniforms]);
+
+  // Debug panel - no React state, direct ref mutation
+  const debugValuesRef = useRef(null);
+  const prevGeometryTypeRef = useRef(null);
+  const prevGeometryArgsRef = useRef(null);
+  
+  // Imperative update function called by debug panel
+  const handleDebugUpdate = useCallback((newValues) => {
+    debugValuesRef.current = newValues;
+    
+    // Size
+    const sizeR = toRange(newValues.size, [0.1, 0.3]);
+    uniforms.sizeMin.value = sizeR[0];
+    uniforms.sizeMax.value = sizeR[1];
+    
+    // Fade
+    const fadeSizeR = toRange(newValues.fadeSize, [1, 0]);
+    const fadeOpacityR = toRange(newValues.fadeOpacity, [1, 0]);
+    uniforms.fadeSizeStart.value = fadeSizeR[0];
+    uniforms.fadeSizeEnd.value = fadeSizeR[1];
+    uniforms.fadeOpacityStart.value = fadeOpacityR[0];
+    uniforms.fadeOpacityEnd.value = fadeOpacityR[1];
+    
+    // Physics - update gravity Vector3 components directly
+    if (newValues.gravity && Array.isArray(newValues.gravity)) {
+      uniforms.gravity.value.x = newValues.gravity[0];
+      uniforms.gravity.value.y = newValues.gravity[1];
+      uniforms.gravity.value.z = newValues.gravity[2];
+    }
+    
+    const speedR = toRange(newValues.speed, [0.1, 0.1]);
+    uniforms.speedMin.value = speedR[0];
+    uniforms.speedMax.value = speedR[1];
+    
+    // Lifetime
+    const lifetimeR = toRange(newValues.lifetime, [1, 2]);
+    uniforms.lifetimeMin.value = 1 / lifetimeR[1];
+    uniforms.lifetimeMax.value = 1 / lifetimeR[0];
+    
+    // Friction
+    if (newValues.friction) {
+      const frictionR = toRange(newValues.friction.intensity, [0, 0]);
+      uniforms.frictionIntensityStart.value = frictionR[0];
+      uniforms.frictionIntensityEnd.value = frictionR[1];
+      uniforms.frictionEasingType.value = easingToType(newValues.friction.easing);
+    }
+    
+    // Direction 3D
+    const dir3D = toRotation3D(newValues.direction);
+    uniforms.dirMinX.value = dir3D[0][0];
+    uniforms.dirMaxX.value = dir3D[0][1];
+    uniforms.dirMinY.value = dir3D[1][0];
+    uniforms.dirMaxY.value = dir3D[1][1];
+    uniforms.dirMinZ.value = dir3D[2][0];
+    uniforms.dirMaxZ.value = dir3D[2][1];
+    
+    // Start position 3D
+    const startPos3D = toRotation3D(newValues.startPosition);
+    uniforms.startPosMinX.value = startPos3D[0][0];
+    uniforms.startPosMaxX.value = startPos3D[0][1];
+    uniforms.startPosMinY.value = startPos3D[1][0];
+    uniforms.startPosMaxY.value = startPos3D[1][1];
+    uniforms.startPosMinZ.value = startPos3D[2][0];
+    uniforms.startPosMaxZ.value = startPos3D[2][1];
+    
+    // Rotation 3D
+    const rot3D = toRotation3D(newValues.rotation);
+    uniforms.rotationMinX.value = rot3D[0][0];
+    uniforms.rotationMaxX.value = rot3D[0][1];
+    uniforms.rotationMinY.value = rot3D[1][0];
+    uniforms.rotationMaxY.value = rot3D[1][1];
+    uniforms.rotationMinZ.value = rot3D[2][0];
+    uniforms.rotationMaxZ.value = rot3D[2][1];
+    
+    // Rotation speed 3D
+    const rotSpeed3D = toRotation3D(newValues.rotationSpeed);
+    uniforms.rotationSpeedMinX.value = rotSpeed3D[0][0];
+    uniforms.rotationSpeedMaxX.value = rotSpeed3D[0][1];
+    uniforms.rotationSpeedMinY.value = rotSpeed3D[1][0];
+    uniforms.rotationSpeedMaxY.value = rotSpeed3D[1][1];
+    uniforms.rotationSpeedMinZ.value = rotSpeed3D[2][0];
+    uniforms.rotationSpeedMaxZ.value = rotSpeed3D[2][1];
+    
+    // Intensity
+    uniforms.intensity.value = newValues.intensity || 1;
+    
+    // Colors
+    if (newValues.colorStart) {
+      const startColors = newValues.colorStart.slice(0, 8).map(hexToRgb);
+      while (startColors.length < 8) startColors.push(startColors[startColors.length - 1] || [1, 1, 1]);
+      uniforms.colorStartCount.value = newValues.colorStart.length;
+      startColors.forEach((c, i) => {
+        if (uniforms[`colorStart${i}`]) {
+          uniforms[`colorStart${i}`].value.setRGB(...c);
+        }
+      });
+    }
+    
+    // If colorEnd is null, use colorStart for end colors (no color transition)
+    const effectiveEndColors = newValues.colorEnd || newValues.colorStart;
+    if (effectiveEndColors) {
+      const endColors = effectiveEndColors.slice(0, 8).map(hexToRgb);
+      while (endColors.length < 8) endColors.push(endColors[endColors.length - 1] || [1, 1, 1]);
+      uniforms.colorEndCount.value = effectiveEndColors.length;
+      endColors.forEach((c, i) => {
+        if (uniforms[`colorEnd${i}`]) {
+          uniforms[`colorEnd${i}`].value.setRGB(...c);
+        }
+      });
+    }
+    
+    // Emitter shape
+    uniforms.emitterShapeType.value = newValues.emitterShape ?? EmitterShape.BOX;
+    const emitterRadiusR = toRange(newValues.emitterRadius, [0, 1]);
+    uniforms.emitterRadiusInner.value = emitterRadiusR[0];
+    uniforms.emitterRadiusOuter.value = emitterRadiusR[1];
+    uniforms.emitterAngle.value = newValues.emitterAngle ?? Math.PI / 4;
+    const emitterHeightR = toRange(newValues.emitterHeight, [0, 1]);
+    uniforms.emitterHeightMin.value = emitterHeightR[0];
+    uniforms.emitterHeightMax.value = emitterHeightR[1];
+    uniforms.emitterSurfaceOnly.value = newValues.emitterSurfaceOnly ? 1 : 0;
+    if (newValues.emitterDirection && Array.isArray(newValues.emitterDirection)) {
+      const dir = new THREE.Vector3(...newValues.emitterDirection).normalize();
+      uniforms.emitterDir.value.x = dir.x;
+      uniforms.emitterDir.value.y = dir.y;
+      uniforms.emitterDir.value.z = dir.z;
+    }
+    
+    // Turbulence
+    uniforms.turbulenceIntensity.value = newValues.turbulence?.intensity ?? 0;
+    uniforms.turbulenceFrequency.value = newValues.turbulence?.frequency ?? 1;
+    uniforms.turbulenceSpeed.value = newValues.turbulence?.speed ?? 1;
+    
+    // Attract to center
+    uniforms.attractToCenter.value = newValues.attractToCenter ? 1 : 0;
+    
+    // Soft particles
+    uniforms.softParticlesEnabled.value = newValues.softParticles ? 1 : 0;
+    uniforms.softDistance.value = newValues.softDistance ?? 0.5;
+    
+    // Collision
+    uniforms.collisionEnabled.value = newValues.collision ? 1 : 0;
+    uniforms.collisionPlaneY.value = newValues.collision?.plane?.y ?? 0;
+    uniforms.collisionBounce.value = newValues.collision?.bounce ?? 0.3;
+    uniforms.collisionFriction.value = newValues.collision?.friction ?? 0.8;
+    uniforms.collisionDie.value = newValues.collision?.die ? 1 : 0;
+    uniforms.sizeBasedGravity.value = newValues.collision?.sizeBasedGravity ?? 0;
+    
+    // Position ref update
+    if (newValues.position) {
+      positionRef.current = newValues.position;
+    }
+    
+    // Runtime refs update (for values used in useFrame)
+    delayRef.current = newValues.delay ?? 0;
+    emitCountRef.current = newValues.emitCount ?? 1;
+    turbulenceRef.current = newValues.turbulence;
+    
+    // Update emitting state
+    if (newValues.autoStart !== undefined) {
+      setEmitting(newValues.autoStart);
+    }
+    
+    // Update material blending directly
+    if (material && newValues.blending !== undefined) {
+      material.blending = newValues.blending;
+      material.needsUpdate = true;
+    }
+    
+    // Remount-required values - these trigger useMemo recalculation
+    if (newValues.maxParticles !== undefined && newValues.maxParticles !== activeMaxParticles) {
+      setActiveMaxParticles(newValues.maxParticles);
+      initialized.current = false; // Force re-init
+      nextIndex.current = 0;
+    }
+    if (newValues.lighting !== undefined && newValues.lighting !== activeLighting) {
+      setActiveLighting(newValues.lighting);
+    }
+    if (newValues.appearance !== undefined && newValues.appearance !== activeAppearance) {
+      setActiveAppearance(newValues.appearance);
+    }
+    if (newValues.orientToDirection !== undefined && newValues.orientToDirection !== activeOrientToDirection) {
+      setActiveOrientToDirection(newValues.orientToDirection);
+    }
+    if (newValues.shadow !== undefined && newValues.shadow !== activeShadow) {
+      setActiveShadow(newValues.shadow);
+    }
+    
+    // Handle geometry type and args changes - only recreate if actually changed
+    const geoType = newValues.geometryType;
+    const geoArgs = newValues.geometryArgs;
+    const geoTypeChanged = geoType !== prevGeometryTypeRef.current;
+    const geoArgsChanged = JSON.stringify(geoArgs) !== JSON.stringify(prevGeometryArgsRef.current);
+    
+    if (geoTypeChanged || geoArgsChanged) {
+      prevGeometryTypeRef.current = geoType;
+      prevGeometryArgsRef.current = geoArgs;
+      
+      import("./VFXParticlesDebugPanel").then(({ createGeometry, GeometryType }) => {
+        if (geoType === GeometryType.NONE || !geoType) {
+          if (activeGeometry !== null) {
+            setActiveGeometry(null);
+          }
+        } else {
+          const newGeometry = createGeometry(geoType, geoArgs);
+          if (newGeometry) {
+            setActiveGeometry(newGeometry);
+          }
+        }
+      });
+    }
+  }, [uniforms, material, renderObject, activeMaxParticles, activeLighting, activeAppearance, activeOrientToDirection, activeShadow, activeGeometry]);
+
+  // Initialize debug panel once on mount if debug is enabled
+  useEffect(() => {
+    if (!debug) return;
+    
+    // Initialize debug values from props
+    const initialValues = {
+      maxParticles,
+      size,
+      colorStart,
+      colorEnd,
+      fadeSize,
+      fadeOpacity,
+      gravity,
+      lifetime,
+      direction,
+      startPosition,
+      speed,
+      friction,
+      appearance,
+      rotation,
+      rotationSpeed,
+      orientToDirection,
+      lighting,
+      shadow,
+      blending,
+      intensity,
+      position,
+      autoStart,
+      delay,
+      emitCount,
+      emitterShape,
+      emitterRadius,
+      emitterAngle,
+      emitterHeight,
+      emitterSurfaceOnly,
+      emitterDirection,
+      turbulence,
+      attractToCenter,
+      softParticles,
+      softDistance,
+      collision,
+      // Geometry type and args - detect from passed geometry if possible
+      ...detectGeometryTypeAndArgs(geometry),
+    };
+    
+    // Helper to detect geometry type from THREE.js geometry object
+    function detectGeometryTypeAndArgs(geo) {
+      if (!geo) return { geometryType: "none", geometryArgs: null };
+      
+      const name = geo.constructor.name;
+      const params = geo.parameters || {};
+      
+      switch (name) {
+        case "BoxGeometry":
+          return { 
+            geometryType: "box", 
+            geometryArgs: { 
+              width: params.width ?? 1, 
+              height: params.height ?? 1, 
+              depth: params.depth ?? 1,
+              widthSegments: params.widthSegments ?? 1,
+              heightSegments: params.heightSegments ?? 1,
+              depthSegments: params.depthSegments ?? 1,
+            } 
+          };
+        case "SphereGeometry":
+          return { 
+            geometryType: "sphere", 
+            geometryArgs: { 
+              radius: params.radius ?? 0.5, 
+              widthSegments: params.widthSegments ?? 16, 
+              heightSegments: params.heightSegments ?? 12,
+            } 
+          };
+        case "CylinderGeometry":
+          return { 
+            geometryType: "cylinder", 
+            geometryArgs: { 
+              radiusTop: params.radiusTop ?? 0.5, 
+              radiusBottom: params.radiusBottom ?? 0.5, 
+              height: params.height ?? 1,
+              radialSegments: params.radialSegments ?? 16,
+              heightSegments: params.heightSegments ?? 1,
+            } 
+          };
+        case "ConeGeometry":
+          return { 
+            geometryType: "cone", 
+            geometryArgs: { 
+              radius: params.radius ?? 0.5, 
+              height: params.height ?? 1,
+              radialSegments: params.radialSegments ?? 16,
+              heightSegments: params.heightSegments ?? 1,
+            } 
+          };
+        case "TorusGeometry":
+          return { 
+            geometryType: "torus", 
+            geometryArgs: { 
+              radius: params.radius ?? 0.5, 
+              tube: params.tube ?? 0.2,
+              radialSegments: params.radialSegments ?? 12,
+              tubularSegments: params.tubularSegments ?? 24,
+            } 
+          };
+        case "PlaneGeometry":
+          return { 
+            geometryType: "plane", 
+            geometryArgs: { 
+              width: params.width ?? 1, 
+              height: params.height ?? 1,
+              widthSegments: params.widthSegments ?? 1,
+              heightSegments: params.heightSegments ?? 1,
+            } 
+          };
+        case "CircleGeometry":
+          return { 
+            geometryType: "circle", 
+            geometryArgs: { 
+              radius: params.radius ?? 0.5, 
+              segments: params.segments ?? 16,
+            } 
+          };
+        case "RingGeometry":
+          return { 
+            geometryType: "ring", 
+            geometryArgs: { 
+              innerRadius: params.innerRadius ?? 0.25, 
+              outerRadius: params.outerRadius ?? 0.5,
+              thetaSegments: params.thetaSegments ?? 16,
+            } 
+          };
+        case "DodecahedronGeometry":
+          return { geometryType: "dodecahedron", geometryArgs: { radius: params.radius ?? 0.5, detail: params.detail ?? 0 } };
+        case "IcosahedronGeometry":
+          return { geometryType: "icosahedron", geometryArgs: { radius: params.radius ?? 0.5, detail: params.detail ?? 0 } };
+        case "OctahedronGeometry":
+          return { geometryType: "octahedron", geometryArgs: { radius: params.radius ?? 0.5, detail: params.detail ?? 0 } };
+        case "TetrahedronGeometry":
+          return { geometryType: "tetrahedron", geometryArgs: { radius: params.radius ?? 0.5, detail: params.detail ?? 0 } };
+        case "CapsuleGeometry":
+          return { 
+            geometryType: "capsule", 
+            geometryArgs: { 
+              radius: params.radius ?? 0.25, 
+              length: params.length ?? 0.5,
+              capSegments: params.capSegments ?? 4,
+              radialSegments: params.radialSegments ?? 8,
+            } 
+          };
+        default:
+          // Unknown geometry type - show as "none" but keep the geometry
+          return { geometryType: "none", geometryArgs: null };
+      }
+    }
+    debugValuesRef.current = initialValues;
+    // Initialize geometry tracking refs
+    prevGeometryTypeRef.current = initialValues.geometryType;
+    prevGeometryArgsRef.current = initialValues.geometryArgs;
+    
+    // Render debug panel
+    import("./VFXParticlesDebugPanel").then(({ renderDebugPanel }) => {
+      renderDebugPanel(initialValues, handleDebugUpdate);
+    });
+    
+    return () => {
+      import("./VFXParticlesDebugPanel").then(({ destroyDebugPanel }) => {
+        destroyDebugPanel();
+      });
+    };
+  }, [debug]);
 
   return <primitive ref={spriteRef} object={renderObject} />;
 });

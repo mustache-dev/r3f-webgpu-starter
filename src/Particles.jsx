@@ -386,13 +386,83 @@ export const Particles = () => {
 
       {/* Bouncing spheres with floor collision */}
       <VFXParticles
+  geometry={new BoxGeometry(0.1, 0.1, 1.5, 1, 1, 1)}
+  position={[0, 0, 0]}
+  intensity={4.5}
+  size={[0.01, 0.3]}
+  fadeSize={[1, 0]}
+  colorStart={["#ff0000", "#ff6600", "#ffb30f"]}
+  fadeOpacity={[1, 0]}
+  gravity={[0.5, 1.9, 0]}
+  speed={[0, 0.04]}
+  lifetime={[0.4, 0.9]}
+  friction={{
+    intensity: 0.1,
+    easing: "easeOut"
+  }}
+  direction={[[-1, 1], [0, 1], [-1, 1]]}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  orientToDirection={true}
+  appearance="default"
+  blending={2}
+  lighting="basic"
+  emitterShape={1}
+  emitterRadius={[0, 1]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
+  turbulence={{
+    intensity: 0.08,
+    frequency: 1.99,
+    speed: 0.19
+  }}
+/>
+<VFXParticles
+debug
+  geometry={new BoxGeometry(0.1, 0.1, 1.5, 1, 1, 1)}
+  position={[0, 0, 0]}
+  intensity={4.5}
+  size={[0.01, 0.3]}
+  fadeSize={[1, 0]}
+  colorStart={["#ff0000", "#ff6600", "#ffb30f"]}
+  fadeOpacity={[1, 0]}
+  gravity={[0.5, 1.9, 0]}
+  speed={[0, 0.04]}
+  lifetime={[1, 2]}
+  friction={{
+    intensity: 0.1,
+    easing: "easeOut"
+  }}
+  direction={[[-1, 1], [0, 1], [-1, 1]]}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  orientToDirection={true}
+  appearance="default"
+  blending={2}
+  lighting="basic"
+  emitterShape={1}
+  emitterRadius={[0, 1]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
+  turbulence={{
+    intensity: 0.08,
+    frequency: 1.99,
+    speed: 0.19
+  }}
+/>
+      {/* <VFXParticles
+        // debug={true}
         autoStart={true}
-        maxParticles={10000}
+        maxParticles={100}
         position={[-1, 1, 0]}
         geometry={sphereGeometry}
         lighting={Lighting.STANDARD}
         size={[0.1, 0.5]}
-        delay={0.}
+        delay={0.5}
         colorStart={["#ff4466", "#44ff66", "#4466ff", "#ffff44"]}
         colorEnd={["#662233", "#226633", "#223366", "#666622"]}
         fadeSize={[1, 1]}
@@ -404,6 +474,7 @@ export const Particles = () => {
         speed={0.1}
         emitCount={10}
         shadow={true}
+        castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.) }
         collision={{
           plane: { y: -1 },
           bounce: 0.8,
@@ -411,7 +482,7 @@ export const Particles = () => {
           die: false,
           sizeBasedGravity: 4,
         }}
-      />
+      /> */}
 
       {/* SPHERE emitter with TURBULENCE - swirling magical orb */}
       {/* <VFXParticles
