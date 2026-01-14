@@ -15,8 +15,8 @@ function Player() {
   const currentAnimation = useRef('idle-sword')
   const attackPressed = useRef(false)
   
-  const walkSpeed = 1.2
-  const runSpeed = 2
+  const walkSpeed = 5
+  const runSpeed = 10
   const smokeRef = useRef()
   const lastSmokeTime = useRef(0)
   const SMOKE_THROTTLE_MS = 1000

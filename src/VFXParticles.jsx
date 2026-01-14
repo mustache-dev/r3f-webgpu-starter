@@ -26,6 +26,12 @@ import {
   acos,
   PI,
   mx_noise_vec3,
+  screenUV,
+  viewportDepthTexture,
+  positionView,
+  cameraNear,
+  cameraFar,
+  clamp,
 } from "three/tsl";
 // Appearance enum for particle shapes
 export const Appearance = Object.freeze({
@@ -52,6 +58,30 @@ export const EmitterShape = Object.freeze({
   EDGE: 5,    // Line between two points
 });
 
+// Attractor types
+export const AttractorType = Object.freeze({
+  POINT: 0,   // Pull toward a point (or push if negative strength)
+  VORTEX: 1,  // Swirl around an axis
+});
+
+// Easing types for curves (friction, etc.)
+export const Easing = Object.freeze({
+  LINEAR: 0,
+  EASE_IN: 1,
+  EASE_OUT: 2,
+  EASE_IN_OUT: 3,
+});
+
+// Lighting/material types for geometry-based particles
+export const Lighting = Object.freeze({
+  BASIC: "basic",       // No lighting, flat colors (MeshBasicNodeMaterial)
+  STANDARD: "standard", // Standard PBR (MeshStandardNodeMaterial)
+  PHYSICAL: "physical", // Advanced PBR with clearcoat, transmission, etc. (MeshPhysicalNodeMaterial)
+});
+
+// Max number of attractors supported
+const MAX_ATTRACTORS = 4;
+
 // Convert hex to RGB array [0-1]
 const hexToRgb = (hex) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
@@ -67,6 +97,17 @@ const toRange = (value, defaultVal = [0, 0]) => {
   if (value === undefined || value === null) return defaultVal;
   if (Array.isArray(value)) return value.length === 2 ? value : [value[0], value[0]];
   return [value, value];
+};
+
+// Convert easing string to type number
+const easingToType = (easing) => {
+  if (typeof easing === 'number') return easing;
+  switch (easing) {
+    case 'easeIn': return 1;
+    case 'easeOut': return 2;
+    case 'easeInOut': return 3;
+    default: return 0; // linear
+  }
 };
 
 // Normalize rotation prop - supports:
@@ -107,7 +148,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     startPositionMin = [0, 0, 0],
     startPositionMax = [0, 0, 0],
     speed = [0.1, 0.1],
-    friction = 0.99,
+    friction = { intensity: 0, easing: 'linear' }, // { intensity: [start, end] or single value, easing: string }
+    // intensity: 1 = max friction (almost stopped), 0 = no friction (normal), negative = boost/acceleration
     appearance = Appearance.GRADIENT,
     alphaMap = null,
     flipbook = null, // { rows: 4, columns: 8 }
@@ -115,7 +157,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     rotationSpeed = [0, 0], // [min, max] rotation speed in radians/second
     geometry = null, // Custom geometry (e.g. new THREE.SphereGeometry(0.5, 8, 8))
     orientToDirection = false, // Rotate geometry to face velocity direction (geometry mode only)
-    castShadow = false,
+    lighting = Lighting.STANDARD, // 'basic' | 'standard' | 'physical' - material type for geometry mode
+    shadow = false, // Enable both castShadow and receiveShadow on geometry instances
     blending = Blending.NORMAL,
     intensity = 1,
     position = [0, 0, 0],
@@ -123,6 +166,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     delay = 0,
     backdropNode = null, // TSL node or function for backdrop sampling
     opacityNode = null,  // TSL node or function for custom opacity control
+    colorNode = null,    // TSL node or function to override color (receives particleData, should return vec4)
+    castShadowNode = null,   // TSL node or function for shadow map output (what shadow the particle casts)
     emitCount = 1,
     // Emitter shape props
     emitterShape = EmitterShape.BOX, // Emission shape type
@@ -133,6 +178,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
     emitterDirection = [0, 1, 0], // Direction for cone/disk normal
     // Turbulence (curl noise)
     turbulence = null, // { intensity: 0.5, frequency: 1, speed: 1 }
+    // Attractors - array of up to 4 attractors
+    // { position: [x,y,z], strength: 1, radius: 3, type: 'point'|'vortex', axis?: [x,y,z] }
+    attractors = null,
+    // Simple attract to center - particles move from spawn position to center over lifetime
+    // Overrides speed/direction - lifetime controls how long it takes to reach center
+    attractToCenter = false,
+    // Soft particles - fade when intersecting scene geometry
+    softParticles = false,
+    softDistance = 0.5, // Distance in world units over which to fade
   },
   ref
 ) {
@@ -156,6 +210,20 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const rotationSpeed3D = useMemo(() => toRotation3D(rotationSpeed), [rotationSpeed]);
   const emitterRadiusRange = useMemo(() => toRange(emitterRadius, [0, 1]), [emitterRadius]);
   const emitterHeightRange = useMemo(() => toRange(emitterHeight, [0, 1]), [emitterHeight]);
+  
+  // Parse friction object: { intensity: [start, end] or single value, easing: string }
+  const frictionIntensityRange = useMemo(() => {
+    if (typeof friction === 'object' && friction !== null && 'intensity' in friction) {
+      return toRange(friction.intensity, [0, 0]);
+    }
+    return [0, 0]; // Default: no friction
+  }, [friction]);
+  const frictionEasingType = useMemo(() => {
+    if (typeof friction === 'object' && friction !== null && 'easing' in friction) {
+      return easingToType(friction.easing);
+    }
+    return 0; // linear
+  }, [friction]);
 
   // Convert color arrays to RGB (support up to 8 colors each)
   const startColors = useMemo(() => {
@@ -183,7 +251,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
       fadeOpacityStart: uniform(fadeOpacityRange[0]),
       fadeOpacityEnd: uniform(fadeOpacityRange[1]),
       gravity: uniform(new THREE.Vector3(...gravity)),
-      friction: uniform(friction),
+      frictionIntensityStart: uniform(frictionIntensityRange[0]),
+      frictionIntensityEnd: uniform(frictionIntensityRange[1]),
+      frictionEasingType: uniform(frictionEasingType),
       speedMin: uniform(speedRange[0]),
       speedMax: uniform(speedRange[1]),
       lifetimeMin: uniform(lifetimeToFadeRate(lifetimeRange[1])),
@@ -245,6 +315,33 @@ export const VFXParticles = forwardRef(function VFXParticles(
       turbulenceFrequency: uniform(turbulence?.frequency ?? 1),
       turbulenceSpeed: uniform(turbulence?.speed ?? 1),
       turbulenceTime: uniform(0), // Updated each frame
+      // Attractor uniforms (up to 4)
+      attractorCount: uniform(0),
+      attractor0Pos: uniform(new THREE.Vector3(0, 0, 0)),
+      attractor0Strength: uniform(0),
+      attractor0Radius: uniform(1),
+      attractor0Type: uniform(0),
+      attractor0Axis: uniform(new THREE.Vector3(0, 1, 0)),
+      attractor1Pos: uniform(new THREE.Vector3(0, 0, 0)),
+      attractor1Strength: uniform(0),
+      attractor1Radius: uniform(1),
+      attractor1Type: uniform(0),
+      attractor1Axis: uniform(new THREE.Vector3(0, 1, 0)),
+      attractor2Pos: uniform(new THREE.Vector3(0, 0, 0)),
+      attractor2Strength: uniform(0),
+      attractor2Radius: uniform(1),
+      attractor2Type: uniform(0),
+      attractor2Axis: uniform(new THREE.Vector3(0, 1, 0)),
+      attractor3Pos: uniform(new THREE.Vector3(0, 0, 0)),
+      attractor3Strength: uniform(0),
+      attractor3Radius: uniform(1),
+      attractor3Type: uniform(0),
+      attractor3Axis: uniform(new THREE.Vector3(0, 1, 0)),
+      // Simple attract to center
+      attractToCenter: uniform(attractToCenter ? 1 : 0),
+      // Soft particles
+      softParticlesEnabled: uniform(softParticles ? 1 : 0),
+      softDistance: uniform(softDistance),
     }),
     []
   );
@@ -268,7 +365,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     // Physics
     uniforms.gravity.value.set(...gravity);
-    uniforms.friction.value = friction;
+    uniforms.frictionIntensityStart.value = frictionIntensityRange[0];
+    uniforms.frictionIntensityEnd.value = frictionIntensityRange[1];
+    uniforms.frictionEasingType.value = frictionEasingType;
     uniforms.speedMin.value = speedRange[0];
     uniforms.speedMax.value = speedRange[1];
     
@@ -327,12 +426,35 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.turbulenceIntensity.value = turbulence?.intensity ?? 0;
     uniforms.turbulenceFrequency.value = turbulence?.frequency ?? 1;
     uniforms.turbulenceSpeed.value = turbulence?.speed ?? 1;
+    
+    // Attractors
+    const attractorList = attractors ?? [];
+    uniforms.attractorCount.value = Math.min(attractorList.length, MAX_ATTRACTORS);
+    for (let i = 0; i < MAX_ATTRACTORS; i++) {
+      const a = attractorList[i];
+      if (a) {
+        uniforms[`attractor${i}Pos`].value.set(...(a.position ?? [0, 0, 0]));
+        uniforms[`attractor${i}Strength`].value = a.strength ?? 1;
+        uniforms[`attractor${i}Radius`].value = a.radius ?? 0; // 0 = infinite
+        uniforms[`attractor${i}Type`].value = a.type === 'vortex' ? 1 : 0;
+        uniforms[`attractor${i}Axis`].value.set(...(a.axis ?? [0, 1, 0])).normalize();
+      } else {
+        uniforms[`attractor${i}Strength`].value = 0;
+      }
+    }
+    
+    // Simple attract to center
+    uniforms.attractToCenter.value = attractToCenter ? 1 : 0;
+    
+    // Soft particles
+    uniforms.softParticlesEnabled.value = softParticles ? 1 : 0;
+    uniforms.softDistance.value = softDistance;
   }, [
-    position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, friction, 
+    position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, frictionIntensityRange, frictionEasingType,
     speedRange, lifetimeRange, directionMin, directionMax, rotation3D, rotationSpeed3D,
     intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPositionMin, startPositionMax
+    turbulence, startPositionMin, startPositionMax, attractors, attractToCenter, softParticles, softDistance
   ]);
 
   // GPU Storage arrays
@@ -559,22 +681,29 @@ export const VFXParticles = forwardRef(function VFXParticles(
         
         position.assign(uniforms.spawnPosition.add(shapeOffset));
 
-        // Random direction (handle zero vector to avoid NaN from normalize)
+        // Random fade rate (needed before velocity calc for attractToCenter)
+        const randomFade = mix(uniforms.lifetimeMin, uniforms.lifetimeMax, randFade);
+        fadeRate.assign(randomFade);
+
+        // Velocity calculation
+        const useAttractToCenter = uniforms.attractToCenter.greaterThan(0.5);
+        
+        // AttractToCenter: velocity = -shapeOffset * fadeRate / 60
+        // This makes particles reach center exactly when they die
+        const attractVelocity = shapeOffset.negate().mul(randomFade).div(60);
+        
+        // Normal velocity: random direction * speed
         const dirX = mix(uniforms.dirMin.x, uniforms.dirMax.x, randDirX);
         const dirY = mix(uniforms.dirMin.y, uniforms.dirMax.y, randDirY);
         const dirZ = mix(uniforms.dirMin.z, uniforms.dirMax.z, randDirZ);
         const dirVec = vec3(dirX, dirY, dirZ);
         const dirLength = dirVec.length();
-        // If direction is zero, use zero velocity; otherwise normalize
         const dir = dirLength.greaterThan(0.001).select(dirVec.div(dirLength), vec3(0, 0, 0));
-        
-        // Random speed between min and max
         const randomSpeed = mix(uniforms.speedMin, uniforms.speedMax, randSpeed);
-        velocity.assign(dir.mul(randomSpeed));
-
-        // Random fade rate
-        const randomFade = mix(uniforms.lifetimeMin, uniforms.lifetimeMax, randFade);
-        fadeRate.assign(randomFade);
+        const normalVelocity = dir.mul(randomSpeed);
+        
+        // Select velocity mode
+        velocity.assign(useAttractToCenter.select(attractVelocity, normalVelocity));
 
         // Random size between min and max
         const randomSize = mix(uniforms.sizeMin, uniforms.sizeMax, randSize);
@@ -624,7 +753,42 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // All operations scaled by dt60 for framerate independence
         // Gravity scaled down by 0.02 for more intuitive values (0.05 prop ≈ 0.001 internal)
         velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001));
-        velocity.mulAssign(uniforms.friction.pow(dt60));
+        
+        // Friction with curve support
+        // Calculate particle progress (0 at birth, 1 at death)
+        const progress = float(1).sub(lifetime);
+        
+        // Apply easing function based on frictionEasingType
+        // 0 = linear, 1 = easeIn, 2 = easeOut, 3 = easeInOut
+        const easingType = uniforms.frictionEasingType;
+        const easedProgress = easingType.lessThan(0.5).select(
+          // Linear: t
+          progress,
+          easingType.lessThan(1.5).select(
+            // EaseIn: t^2
+            progress.mul(progress),
+            easingType.lessThan(2.5).select(
+              // EaseOut: 1 - (1-t)^2
+              float(1).sub(float(1).sub(progress).mul(float(1).sub(progress))),
+              // EaseInOut: t < 0.5 ? 2t^2 : 1 - (-2t + 2)^2 / 2
+              progress.lessThan(0.5).select(
+                float(2).mul(progress).mul(progress),
+                float(1).sub(float(-2).mul(progress).add(2).pow(2).div(2))
+              )
+            )
+          )
+        );
+        
+        // Interpolate friction intensity between start and end
+        // intensity: 1 = max friction (almost stopped), 0 = no friction (normal), negative = boost
+        const currentIntensity = mix(uniforms.frictionIntensityStart, uniforms.frictionIntensityEnd, easedProgress);
+        
+        // Map intensity to speed scale (throttle, not destructive):
+        // intensity  1 → scale 0.1 (move at 10% speed)
+        // intensity  0 → scale 1.0 (move at full speed)
+        // intensity -1 → scale 1.9 (move at 190% speed)
+        // This doesn't destroy velocity - it just throttles how much is applied to position
+        const speedScale = float(1).sub(currentIntensity.mul(0.9));
         
         // Curl noise turbulence
         const turbIntensity = uniforms.turbulenceIntensity;
@@ -666,7 +830,77 @@ export const VFXParticles = forwardRef(function VFXParticles(
           velocity.addAssign(curl.mul(turbIntensity).mul(uniforms.deltaTime));
         });
         
-        position.addAssign(velocity.mul(dt60));
+        // Attractors - apply force from each active attractor
+        const attractorCount = uniforms.attractorCount;
+        
+        // Helper function to apply a single attractor's force
+        const applyAttractor = (aPos, aStrength, aRadius, aType, aAxis) => {
+          If(aStrength.abs().greaterThan(0.001), () => {
+            // Vector from particle to attractor
+            const toAttractor = aPos.sub(position);
+            const dist = toAttractor.length();
+            
+            // Avoid division by zero
+            const safeDist = dist.max(0.01);
+            const direction = toAttractor.div(safeDist);
+            
+            // Calculate falloff (1 at center, 0 at radius edge)
+            // If radius is 0, no falloff (infinite range with inverse square)
+            const falloff = aRadius.greaterThan(0.001).select(
+              float(1).sub(dist.div(aRadius)).max(0), // Linear falloff within radius
+              float(1).div(safeDist.mul(safeDist).add(1)) // Inverse square falloff (softened)
+            );
+            
+            // Type 0: Point attractor - pull toward position
+            // Type 1: Vortex - swirl around axis
+            const force = aType.lessThan(0.5).select(
+              // Point attractor: force along direction to attractor
+              direction.mul(aStrength).mul(falloff),
+              // Vortex: force perpendicular to both (toAttractor) and (axis)
+              // cross(axis, toAttractor) gives tangent direction
+              (() => {
+                const tangent = vec3(
+                  aAxis.y.mul(toAttractor.z).sub(aAxis.z.mul(toAttractor.y)),
+                  aAxis.z.mul(toAttractor.x).sub(aAxis.x.mul(toAttractor.z)),
+                  aAxis.x.mul(toAttractor.y).sub(aAxis.y.mul(toAttractor.x))
+                );
+                const tangentLen = tangent.length().max(0.001);
+                return tangent.div(tangentLen).mul(aStrength).mul(falloff);
+              })()
+            );
+            
+            velocity.addAssign(force.mul(uniforms.deltaTime));
+          });
+        };
+        
+        // Apply each attractor (unrolled for shader compatibility)
+        If(attractorCount.greaterThan(0), () => {
+          applyAttractor(
+            uniforms.attractor0Pos, uniforms.attractor0Strength,
+            uniforms.attractor0Radius, uniforms.attractor0Type, uniforms.attractor0Axis
+          );
+        });
+        If(attractorCount.greaterThan(1), () => {
+          applyAttractor(
+            uniforms.attractor1Pos, uniforms.attractor1Strength,
+            uniforms.attractor1Radius, uniforms.attractor1Type, uniforms.attractor1Axis
+          );
+        });
+        If(attractorCount.greaterThan(2), () => {
+          applyAttractor(
+            uniforms.attractor2Pos, uniforms.attractor2Strength,
+            uniforms.attractor2Radius, uniforms.attractor2Type, uniforms.attractor2Axis
+          );
+        });
+        If(attractorCount.greaterThan(3), () => {
+          applyAttractor(
+            uniforms.attractor3Pos, uniforms.attractor3Strength,
+            uniforms.attractor3Radius, uniforms.attractor3Type, uniforms.attractor3Axis
+          );
+        });
+        
+        // Apply velocity to position, scaled by friction (throttle, not destructive)
+        position.addAssign(velocity.mul(dt60).mul(speedScale));
         
         // Calculate rotation speed per-particle using hash (consistent per particle)
         const idx = float(instanceIndex);
@@ -768,17 +1002,59 @@ export const VFXParticles = forwardRef(function VFXParticles(
       colorStart: pColorStart,    // vec3 start color
       colorEnd: pColorEnd,        // vec3 end color
       color: currentColor,        // vec3 interpolated color
+      intensifiedColor,           // vec3 color * intensity
+      shapeMask,                  // float shape/alpha mask
       index: instanceIndex,       // particle index (for randomization)
     };
     
     // Apply custom opacity node if provided (multiplies with base opacity)
-    const finalOpacity = opacityNode
+    let finalOpacity = opacityNode
       ? baseOpacity.mul(typeof opacityNode === 'function' ? opacityNode(particleData) : opacityNode)
       : baseOpacity;
     
+    // Soft particles - fade when near scene geometry
+    if (softParticles) {
+      // Get scene depth from depth buffer at current screen position
+      const sceneDepth = viewportDepthTexture(screenUV).x;
+      
+      // Get particle fragment depth (linearized)
+      // positionView.z is negative (looking down -Z), so negate it
+      const particleViewZ = positionView.z.negate();
+      
+      // Linearize scene depth (from NDC to view space)
+      // depth = (2.0 * near * far) / (far + near - sceneDepth * (far - near))
+      const near = cameraNear;
+      const far = cameraFar;
+      const sceneViewZ = near.mul(far).mul(2).div(
+        far.add(near).sub(sceneDepth.mul(2).sub(1).mul(far.sub(near)))
+      );
+      
+      // Calculate depth difference
+      const depthDiff = sceneViewZ.sub(particleViewZ);
+      
+      // Fade factor: 0 when touching surface, 1 when at softDistance or further
+      const softFade = clamp(depthDiff.div(uniforms.softDistance), 0, 1);
+      
+      // Apply soft fade to opacity
+      finalOpacity = finalOpacity.mul(softFade);
+    }
+    
     if (geometry) {
       // InstancedMesh mode with custom geometry
-      const mat = new THREE.MeshStandardNodeMaterial();
+      // Select material type based on lighting prop
+      let mat;
+      switch (lighting) {
+        case Lighting.BASIC:
+          mat = new THREE.MeshBasicNodeMaterial();
+          break;
+        case Lighting.PHYSICAL:
+          mat = new THREE.MeshPhysicalNodeMaterial();
+          break;
+        case Lighting.STANDARD:
+        default:
+          mat = new THREE.MeshStandardNodeMaterial();
+          break;
+      }
       
       // Scale local position and add particle world position
       const scale = particleSize.mul(sizeMultiplier);
@@ -831,7 +1107,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
       );
       
       mat.positionNode = rotatedPos.mul(scale).add(particlePos);
-      mat.colorNode = vec4(intensifiedColor, finalOpacity);
+      
+      // Apply custom colorNode if provided, otherwise use default
+      const defaultColor = vec4(intensifiedColor, finalOpacity);
+      mat.colorNode = colorNode
+        ? (typeof colorNode === 'function' ? colorNode(particleData, defaultColor) : colorNode)
+        : defaultColor;
+      
       mat.transparent = true;
       mat.depthWrite = false;
       mat.blending = blending;
@@ -845,12 +1127,24 @@ export const VFXParticles = forwardRef(function VFXParticles(
           : backdropNode;
       }
       
+      // Apply custom cast shadow node if provided (controls shadow map output)
+      if (castShadowNode) {
+        mat.castShadowNode = typeof castShadowNode === 'function'
+          ? castShadowNode(particleData)
+          : castShadowNode;
+      }
+      
       return mat;
     } else {
       // Sprite mode (default) - uses Y rotation only for 2D sprites
       const mat = new THREE.SpriteNodeMaterial();
       
-      mat.colorNode = vec4(intensifiedColor, finalOpacity);
+      // Apply custom colorNode if provided, otherwise use default
+      const defaultColor = vec4(intensifiedColor, finalOpacity);
+      mat.colorNode = colorNode
+        ? (typeof colorNode === 'function' ? colorNode(particleData, defaultColor) : colorNode)
+        : defaultColor;
+      
       mat.positionNode = positions.toAttribute();
       mat.scaleNode = particleSize.mul(sizeMultiplier);
       mat.rotationNode = particleRotation.y; // Use Y rotation for sprites
@@ -866,9 +1160,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
           : backdropNode;
       }
       
+      // Apply custom cast shadow node if provided (controls shadow map output)
+      if (castShadowNode) {
+        mat.castShadowNode = typeof castShadowNode === 'function'
+          ? castShadowNode(particleData)
+          : castShadowNode;
+      }
+      
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, backdropNode, opacityNode]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, appearance, alphaMap, flipbook, blending, geometry, orientToDirection, lighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
@@ -876,7 +1177,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       // InstancedMesh mode
       const mesh = new THREE.InstancedMesh(geometry, material, maxParticles);
       mesh.frustumCulled = false;
-      mesh.castShadow = castShadow;
+      mesh.castShadow = shadow;
+      mesh.receiveShadow = shadow;
       return mesh;
     } else {
       // Sprite mode (default)
@@ -885,7 +1187,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       s.frustumCulled = false;
       return s;
     }
-  }, [material, maxParticles, geometry, castShadow]);
+  }, [material, maxParticles, geometry, shadow]);
 
   // Initialize on mount
   useEffect(() => {

@@ -16,7 +16,7 @@ export function WebGPUPostProcessing({
   bloomStrength = 0.15,
   bloomRadius = 0.1,
   bloomThreshold = 0.,
-  motionBlurAmount = 1,
+  motionBlurAmount = 0.01,
   enableSmaa = true,
   enableMotionBlur = false,
 }) {
