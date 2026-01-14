@@ -51,7 +51,7 @@ export const Blending = Object.freeze({
 // Emitter shape types
 export const EmitterShape = Object.freeze({
   POINT: 0,   // Single point emission
-  BOX: 1,     // Box/cube volume (uses startPositionMin/Max)
+  BOX: 1,     // Box/cube volume (uses startPosition ranges)
   SPHERE: 2,  // Sphere surface or volume
   CONE: 3,    // Cone shape (great for fire, fountains)
   DISK: 4,    // Flat disk/circle
@@ -143,10 +143,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     fadeOpacity = [1, 0],
     gravity = [0, 0.001, 0],
     lifetime = [1, 2],
-    directionMin = [-1, 0, -1],
-    directionMax = [1, 1, 1],
-    startPositionMin = [0, 0, 0],
-    startPositionMax = [0, 0, 0],
+    direction = [[-1, 1], [0, 1], [-1, 1]], // [[minX, maxX], [minY, maxY], [minZ, maxZ]] or [min, max] for all axes
+    startPosition = [[0, 0], [0, 0], [0, 0]], // [[minX, maxX], [minY, maxY], [minZ, maxZ]] offset from spawn position
     speed = [0.1, 0.1],
     friction = { intensity: 0, easing: 'linear' }, // { intensity: [start, end] or single value, easing: string }
     // intensity: 1 = max friction (almost stopped), 0 = no friction (normal), negative = boost/acceleration
@@ -187,6 +185,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Soft particles - fade when intersecting scene geometry
     softParticles = false,
     softDistance = 0.5, // Distance in world units over which to fade
+    // Plane collision - particles bounce or die when hitting a plane
+    // { plane: { y: 0 }, bounce: 0.3, friction: 0.8, die: false, sizeBasedGravity: 0 }
+    collision = null,
   },
   ref
 ) {
@@ -208,6 +209,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const lifetimeRange = useMemo(() => toRange(lifetime, [1, 2]), [lifetime]);
   const rotation3D = useMemo(() => toRotation3D(rotation), [rotation]);
   const rotationSpeed3D = useMemo(() => toRotation3D(rotationSpeed), [rotationSpeed]);
+  const direction3D = useMemo(() => toRotation3D(direction), [direction]);
+  const startPosition3D = useMemo(() => toRotation3D(startPosition), [startPosition]);
   const emitterRadiusRange = useMemo(() => toRange(emitterRadius, [0, 1]), [emitterRadius]);
   const emitterHeightRange = useMemo(() => toRange(emitterHeight, [0, 1]), [emitterHeight]);
   
@@ -259,10 +262,20 @@ export const VFXParticles = forwardRef(function VFXParticles(
       lifetimeMin: uniform(lifetimeToFadeRate(lifetimeRange[1])),
       lifetimeMax: uniform(lifetimeToFadeRate(lifetimeRange[0])),
       deltaTime: uniform(1/60), // Will be updated each frame
-      dirMin: uniform(new THREE.Vector3(...directionMin)),
-      dirMax: uniform(new THREE.Vector3(...directionMax)),
-      startPosMin: uniform(new THREE.Vector3(...startPositionMin)),
-      startPosMax: uniform(new THREE.Vector3(...startPositionMax)),
+      // 3D direction ranges
+      dirMinX: uniform(direction3D[0][0]),
+      dirMaxX: uniform(direction3D[0][1]),
+      dirMinY: uniform(direction3D[1][0]),
+      dirMaxY: uniform(direction3D[1][1]),
+      dirMinZ: uniform(direction3D[2][0]),
+      dirMaxZ: uniform(direction3D[2][1]),
+      // 3D start position offset ranges
+      startPosMinX: uniform(startPosition3D[0][0]),
+      startPosMaxX: uniform(startPosition3D[0][1]),
+      startPosMinY: uniform(startPosition3D[1][0]),
+      startPosMaxY: uniform(startPosition3D[1][1]),
+      startPosMinZ: uniform(startPosition3D[2][0]),
+      startPosMaxZ: uniform(startPosition3D[2][1]),
       spawnPosition: uniform(new THREE.Vector3(...position)),
       spawnIndexStart: uniform(0),
       spawnIndexEnd: uniform(0),
@@ -342,6 +355,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
       // Soft particles
       softParticlesEnabled: uniform(softParticles ? 1 : 0),
       softDistance: uniform(softDistance),
+      // Collision uniforms
+      collisionEnabled: uniform(collision ? 1 : 0),
+      collisionPlaneY: uniform(collision?.plane?.y ?? 0),
+      collisionBounce: uniform(collision?.bounce ?? 0.3),
+      collisionFriction: uniform(collision?.friction ?? 0.8),
+      collisionDie: uniform(collision?.die ? 1 : 0),
+      // Size-based gravity (inside collision object)
+      sizeBasedGravity: uniform(collision?.sizeBasedGravity ?? 0),
     }),
     []
   );
@@ -376,12 +397,22 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.lifetimeMax.value = lifetimeToFadeRate(lifetimeRange[0]);
     
     // Direction
-    uniforms.dirMin.value.set(...directionMin);
-    uniforms.dirMax.value.set(...directionMax);
+    // 3D Direction
+    uniforms.dirMinX.value = direction3D[0][0];
+    uniforms.dirMaxX.value = direction3D[0][1];
+    uniforms.dirMinY.value = direction3D[1][0];
+    uniforms.dirMaxY.value = direction3D[1][1];
+    uniforms.dirMinZ.value = direction3D[2][0];
+    uniforms.dirMaxZ.value = direction3D[2][1];
     
     // Start position offset
-    uniforms.startPosMin.value.set(...startPositionMin);
-    uniforms.startPosMax.value.set(...startPositionMax);
+    // 3D Start Position
+    uniforms.startPosMinX.value = startPosition3D[0][0];
+    uniforms.startPosMaxX.value = startPosition3D[0][1];
+    uniforms.startPosMinY.value = startPosition3D[1][0];
+    uniforms.startPosMaxY.value = startPosition3D[1][1];
+    uniforms.startPosMinZ.value = startPosition3D[2][0];
+    uniforms.startPosMaxZ.value = startPosition3D[2][1];
     
     // 3D Rotation
     uniforms.rotationMinX.value = rotation3D[0][0];
@@ -449,12 +480,20 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Soft particles
     uniforms.softParticlesEnabled.value = softParticles ? 1 : 0;
     uniforms.softDistance.value = softDistance;
+    
+    // Collision
+    uniforms.collisionEnabled.value = collision ? 1 : 0;
+    uniforms.collisionPlaneY.value = collision?.plane?.y ?? 0;
+    uniforms.collisionBounce.value = collision?.bounce ?? 0.3;
+    uniforms.collisionFriction.value = collision?.friction ?? 0.8;
+    uniforms.collisionDie.value = collision?.die ? 1 : 0;
+    uniforms.sizeBasedGravity.value = collision?.sizeBasedGravity ?? 0;
   }, [
     position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, frictionIntensityRange, frictionEasingType,
-    speedRange, lifetimeRange, directionMin, directionMax, rotation3D, rotationSpeed3D,
-    intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms,
+    speedRange, lifetimeRange, direction3D, rotation3D, rotationSpeed3D,
+    intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms, collision,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPositionMin, startPositionMax, attractors, attractToCenter, softParticles, softDistance
+    turbulence, startPosition3D, attractors, attractToCenter, softParticles, softDistance
   ]);
 
   // GPU Storage arrays
@@ -624,10 +663,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
           );
         };
         
-        // BOX (shape 1): use startPositionMin/Max
-        const boxOffsetX = mix(uniforms.startPosMin.x, uniforms.startPosMax.x, randPosX);
-        const boxOffsetY = mix(uniforms.startPosMin.y, uniforms.startPosMax.y, randPosY);
-        const boxOffsetZ = mix(uniforms.startPosMin.z, uniforms.startPosMax.z, randPosZ);
+        // BOX (shape 1): use startPosition ranges
+        const boxOffsetX = mix(uniforms.startPosMinX, uniforms.startPosMaxX, randPosX);
+        const boxOffsetY = mix(uniforms.startPosMinY, uniforms.startPosMaxY, randPosY);
+        const boxOffsetZ = mix(uniforms.startPosMinZ, uniforms.startPosMaxZ, randPosZ);
         const boxPos = vec3(boxOffsetX, boxOffsetY, boxOffsetZ);
         
         // SPHERE (shape 2): spherical coordinates
@@ -658,9 +697,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // EDGE (shape 5): line between startPosMin and startPosMax
         const edgeT = randPosX;
         const edgePos = vec3(
-          mix(uniforms.startPosMin.x, uniforms.startPosMax.x, edgeT),
-          mix(uniforms.startPosMin.y, uniforms.startPosMax.y, edgeT),
-          mix(uniforms.startPosMin.z, uniforms.startPosMax.z, edgeT)
+          mix(uniforms.startPosMinX, uniforms.startPosMaxX, edgeT),
+          mix(uniforms.startPosMinY, uniforms.startPosMaxY, edgeT),
+          mix(uniforms.startPosMinZ, uniforms.startPosMaxZ, edgeT)
         );
         
         // POINT (shape 0): no offset
@@ -693,9 +732,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const attractVelocity = shapeOffset.negate().mul(randomFade).div(60);
         
         // Normal velocity: random direction * speed
-        const dirX = mix(uniforms.dirMin.x, uniforms.dirMax.x, randDirX);
-        const dirY = mix(uniforms.dirMin.y, uniforms.dirMax.y, randDirY);
-        const dirZ = mix(uniforms.dirMin.z, uniforms.dirMax.z, randDirZ);
+        const dirX = mix(uniforms.dirMinX, uniforms.dirMaxX, randDirX);
+        const dirY = mix(uniforms.dirMinY, uniforms.dirMaxY, randDirY);
+        const dirZ = mix(uniforms.dirMinZ, uniforms.dirMaxZ, randDirZ);
         const dirVec = vec3(dirX, dirY, dirZ);
         const dirLength = dirVec.length();
         const dir = dirLength.greaterThan(0.001).select(dirVec.div(dirLength), vec3(0, 0, 0));
@@ -746,13 +785,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
       const lifetime = lifetimes.element(instanceIndex);
       const fadeRate = fadeRates.element(instanceIndex);
       const particleRotation = particleRotations.element(instanceIndex);
+      const particleSize = particleSizes.element(instanceIndex);
       // Normalized delta: 1.0 at 60fps, 0.5 at 120fps, 2.0 at 30fps
       const dt60 = uniforms.deltaTime.mul(60);
 
       If(lifetime.greaterThan(0), () => {
         // All operations scaled by dt60 for framerate independence
         // Gravity scaled down by 0.02 for more intuitive values (0.05 prop ≈ 0.001 internal)
-        velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001));
+        // Size-based gravity: gravity * (1 + size * sizeBasedGravity)
+        const gravityMultiplier = float(1).add(particleSize.mul(uniforms.sizeBasedGravity));
+        velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001).mul(gravityMultiplier));
         
         // Friction with curve support
         // Calculate particle progress (0 at birth, 1 at death)
@@ -902,6 +944,34 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // Apply velocity to position, scaled by friction (throttle, not destructive)
         position.addAssign(velocity.mul(dt60).mul(speedScale));
         
+        // Plane collision detection
+        If(uniforms.collisionEnabled.greaterThan(0.5), () => {
+          const planeY = uniforms.collisionPlaneY;
+          const bounce = uniforms.collisionBounce;
+          const friction = uniforms.collisionFriction;
+          const shouldDie = uniforms.collisionDie;
+          
+          // Check if particle is below the plane
+          If(position.y.lessThan(planeY), () => {
+            If(shouldDie.greaterThan(0.5), () => {
+              // Kill the particle
+              lifetime.assign(float(0));
+              position.y.assign(float(-1000));
+            }).Else(() => {
+              // Bounce the particle
+              // Move particle back above the plane
+              position.y.assign(planeY);
+              
+              // Reflect Y velocity and apply bounce factor
+              velocity.y.assign(velocity.y.abs().mul(bounce));
+              
+              // Apply friction to horizontal velocity
+              velocity.x.mulAssign(friction);
+              velocity.z.mulAssign(friction);
+            });
+          });
+        });
+        
         // Calculate rotation speed per-particle using hash (consistent per particle)
         const idx = float(instanceIndex);
         const rotSpeedX = mix(uniforms.rotationSpeedMinX, uniforms.rotationSpeedMaxX, hash(idx.add(8888)));
@@ -920,7 +990,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
         });
       });
     })().compute(maxParticles);
-  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleRotations, uniforms]);
+  }, [maxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, uniforms]);
 
   // Material (either Sprite or Mesh material based on geometry prop)
   const material = useMemo(() => {
@@ -1197,9 +1267,121 @@ export const VFXParticles = forwardRef(function VFXParticles(
     });
   }, [renderer, computeInit]);
 
+  // Apply spawn overrides to uniforms, returns restore function
+  const applySpawnOverrides = useCallback((overrides) => {
+    if (!overrides) return null;
+    
+    const saved = {};
+    
+    // Helper to save and set uniform value
+    const setUniform = (key, value) => {
+      if (uniforms[key]) {
+        saved[key] = uniforms[key].value;
+        uniforms[key].value = value;
+      }
+    };
+    
+    // Size: number or [min, max]
+    if (overrides.size !== undefined) {
+      const range = toRange(overrides.size, [0.1, 0.3]);
+      setUniform('sizeMin', range[0]);
+      setUniform('sizeMax', range[1]);
+    }
+    
+    // Speed: number or [min, max]
+    if (overrides.speed !== undefined) {
+      const range = toRange(overrides.speed, [0.1, 0.1]);
+      setUniform('speedMin', range[0]);
+      setUniform('speedMax', range[1]);
+    }
+    
+    // Lifetime: number or [min, max]
+    if (overrides.lifetime !== undefined) {
+      const range = toRange(overrides.lifetime, [1, 2]);
+      setUniform('lifetimeMin', 1 / range[1]);
+      setUniform('lifetimeMax', 1 / range[0]);
+    }
+    
+    // Direction: [[minX, maxX], [minY, maxY], [minZ, maxZ]] or [min, max] or number
+    if (overrides.direction !== undefined) {
+      const dir3D = toRotation3D(overrides.direction);
+      setUniform('dirMinX', dir3D[0][0]);
+      setUniform('dirMaxX', dir3D[0][1]);
+      setUniform('dirMinY', dir3D[1][0]);
+      setUniform('dirMaxY', dir3D[1][1]);
+      setUniform('dirMinZ', dir3D[2][0]);
+      setUniform('dirMaxZ', dir3D[2][1]);
+    }
+    
+    // Start position offset
+    if (overrides.startPosition !== undefined) {
+      const pos3D = toRotation3D(overrides.startPosition);
+      setUniform('startPosMinX', pos3D[0][0]);
+      setUniform('startPosMaxX', pos3D[0][1]);
+      setUniform('startPosMinY', pos3D[1][0]);
+      setUniform('startPosMaxY', pos3D[1][1]);
+      setUniform('startPosMinZ', pos3D[2][0]);
+      setUniform('startPosMaxZ', pos3D[2][1]);
+    }
+    
+    // Gravity: [x, y, z]
+    if (overrides.gravity !== undefined) {
+      saved.gravity = uniforms.gravity.value.clone();
+      uniforms.gravity.value.set(...overrides.gravity);
+    }
+    
+    // Colors - requires converting hex to RGB and setting multiple uniforms
+    if (overrides.colorStart !== undefined) {
+      const colors = overrides.colorStart.slice(0, 8).map(hexToRgb);
+      while (colors.length < 8) colors.push(colors[colors.length - 1] || [1, 1, 1]);
+      setUniform('colorStartCount', overrides.colorStart.length);
+      colors.forEach((c, i) => {
+        if (uniforms[`colorStart${i}`]) {
+          saved[`colorStart${i}`] = uniforms[`colorStart${i}`].value.clone();
+          uniforms[`colorStart${i}`].value.setRGB(...c);
+        }
+      });
+    }
+    
+    if (overrides.colorEnd !== undefined) {
+      const colors = overrides.colorEnd.slice(0, 8).map(hexToRgb);
+      while (colors.length < 8) colors.push(colors[colors.length - 1] || [1, 1, 1]);
+      setUniform('colorEndCount', overrides.colorEnd.length);
+      colors.forEach((c, i) => {
+        if (uniforms[`colorEnd${i}`]) {
+          saved[`colorEnd${i}`] = uniforms[`colorEnd${i}`].value.clone();
+          uniforms[`colorEnd${i}`].value.setRGB(...c);
+        }
+      });
+    }
+    
+    // Rotation
+    if (overrides.rotation !== undefined) {
+      const rot3D = toRotation3D(overrides.rotation);
+      setUniform('rotationMinX', rot3D[0][0]);
+      setUniform('rotationMaxX', rot3D[0][1]);
+      setUniform('rotationMinY', rot3D[1][0]);
+      setUniform('rotationMaxY', rot3D[1][1]);
+      setUniform('rotationMinZ', rot3D[2][0]);
+      setUniform('rotationMaxZ', rot3D[2][1]);
+    }
+    
+    // Return restore function
+    return () => {
+      Object.entries(saved).forEach(([key, value]) => {
+        if (uniforms[key]) {
+          uniforms[key].value = value;
+        }
+      });
+    };
+  }, [uniforms]);
+
   // Spawn function - internal
-  const spawnInternal = useCallback((x, y, z, count = 20) => {
+  const spawnInternal = useCallback((x, y, z, count = 20, overrides = null) => {
     if (!initialized.current || !renderer) return;
+
+    // Apply overrides and get restore function
+    const restore = applySpawnOverrides(overrides);
 
     const startIdx = nextIndex.current;
     const endIdx = (startIdx + count) % maxParticles;
@@ -1210,13 +1392,18 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.spawnSeed.value = Math.random() * 10000;
 
     nextIndex.current = endIdx;
-    renderer.computeAsync(computeSpawn);
-  }, [renderer, computeSpawn, uniforms, maxParticles]);
+    
+    // Run compute and restore original values
+    renderer.computeAsync(computeSpawn).then(() => {
+      if (restore) restore();
+    });
+  }, [renderer, computeSpawn, uniforms, maxParticles, applySpawnOverrides]);
 
-  // Public spawn - uses position prop as offset
-  const spawn = useCallback((x = 0, y = 0, z = 0, count = 20) => {
+  // Public spawn - uses position prop as offset, supports overrides
+  // spawn(x, y, z, count, { colorStart: [...], direction: [...], ... })
+  const spawn = useCallback((x = 0, y = 0, z = 0, count = 20, overrides = null) => {
     const [px, py, pz] = positionRef.current;
-    spawnInternal(px + x, py + y, pz + z, count);
+    spawnInternal(px + x, py + y, pz + z, count, overrides);
   }, [spawnInternal]);
 
   // Update each frame + auto emit
@@ -1261,6 +1448,31 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const stop = useCallback(() => {
     setEmitting(false);
   }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Dispose material
+      if (material) {
+        material.dispose();
+      }
+      
+      // Dispose render object (InstancedMesh or Sprite)
+      if (renderObject) {
+        if (renderObject.geometry && !geometry) {
+          // Only dispose geometry if we created it (sprite mode)
+          renderObject.geometry.dispose();
+        }
+        if (renderObject.material) {
+          renderObject.material.dispose();
+        }
+      }
+      
+      // Reset initialization state
+      initialized.current = false;
+      nextIndex.current = 0;
+    };
+  }, [material, renderObject, geometry]);
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({

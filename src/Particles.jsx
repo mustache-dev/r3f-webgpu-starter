@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
 import { VFXParticles, Appearance, Blending, EmitterShape, Lighting } from "./VFXParticles";
 import {
   TextureLoader,
@@ -35,6 +36,7 @@ import {
 } from "three/tsl";
 
 export const Particles = () => {
+  const swordParticlesRef = useRef();
   const smokeTexture = new TextureLoader().load("./smoke.png");
   const noiseTexture = new TextureLoader().load("./noise.png");
   const { nodes: cherryBlossomPetalNodes } = useGLTF(
@@ -54,6 +56,11 @@ export const Particles = () => {
     const geo1 = nodes.Cube001.geometry;
     return geo1;
   }, [nodes]);
+
+  // Sphere geometry for bouncing balls
+  const sphereGeometry = useMemo(() => {
+    return new SphereGeometry(0.5, 16, 16);
+  }, []);
 
   const distortionBackdrop = ({ progress }) => {
     const vUv = screenUV;
@@ -123,9 +130,30 @@ export const Particles = () => {
 
     return finalColor;
   }, []);
+
+  // Spawn swords at 4 uniform positions, all emitting in the same direction
+  const spawnAccumulator = useRef(0);
+  useFrame((state, delta) => {
+    if (!swordParticlesRef.current) return;
+    
+    spawnAccumulator.current += delta;
+    if (spawnAccumulator.current < 2) return; // Spawn every 0.5 seconds
+    spawnAccumulator.current = 0;
+    
+    const count = 25;
+
+    const  offset = 10
+    
+    // 4 positions in a square pattern, all shooting toward center (0, 0, 0)
+    // swordParticlesRef.current.spawn(-offset, 0, -offset, count, { direction: [[1, 1], [0, 0], [1, 1]], });   // → toward +X, +Z
+    // swordParticlesRef.current.spawn(offset, 0, -offset, count, { direction: [[-1, -1], [0, 0], [1, 1]], });  // → toward -X, +Z
+    // swordParticlesRef.current.spawn(-offset, 0, offset, count, { direction: [[1, 1], [0, 0], [-1, -1]], });  // → toward +X, -Z
+    // swordParticlesRef.current.spawn(offset, 0, offset, count, { direction: [[-1, -1], [0, 0], [-1, -1]], }); // → toward -X, -Z
+  });
+
   return (
     <group>
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
         position={[-9, 0, 0]}
@@ -138,10 +166,8 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[-0.2, 0.2, 0]}
         lifetime={4}
-        directionMin={[0, 0, 0]}
-        directionMax={[-0.5, 0, 0]}
-        startPositionMin={[-0.3, -0.3, -0.3]}
-        startPositionMax={[0.3, 0.3, 0.3]}
+        direction={[[0, -0.5], [0, 0], [0, 0]]}
+        startPosition={[[-0.3, 0.3], [-0.3, 0.3], [-0.3, 0.3]]}
         speed={0.01}
         friction={1}
         shadow={true}
@@ -156,7 +182,7 @@ export const Particles = () => {
         // intensity={10}
         // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
         // backdropNode={_distortionBackdrop}
-      />
+      /> */}
       {/* <VFXParticles
         autoStart={true}
         maxParticles={1000}
@@ -170,10 +196,8 @@ export const Particles = () => {
         fadeOpacity={[1, 1]}
         gravity={[0, -0.1, 0]}
         lifetime={2}
-        directionMin={[-1, 0, -1]}
-        directionMax={[1, 0, 1]}
-        startPositionMin={[0, 0, 0]}
-        startPositionMax={[0, 0, 0]}
+        direction={[[-1, 1], [0, 0], [-1, 1]]}
+        startPosition={0}
         speed={0.005}
         friction={1}
         shadow={true}
@@ -195,10 +219,8 @@ export const Particles = () => {
         fadeOpacity={[1, 1]}
         gravity={[0, 0, 0]}
         lifetime={2}
-        directionMin={[-1, -1, -1]}
-        directionMax={[1, 1, 1]}
-        startPositionMin={[0, 0, 0]}
-        startPositionMax={[0, 0, 0]}
+        direction={[[-1, 1], [-1, 1], [-1, 1]]}
+        startPosition={0}
         speed={0.3}
         friction={0.8}
         shadow={true}
@@ -207,7 +229,7 @@ export const Particles = () => {
         opacityNode={({ progress }) => smoothstep(0, 0.1, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
-       <VFXParticles
+       {/* <VFXParticles
         autoStart={true}
         maxParticles={1090}
         position={[-6, 0, 0]}
@@ -220,10 +242,8 @@ export const Particles = () => {
         fadeOpacity={[1, 1]}
         gravity={[0, 0, 0]}
         lifetime={[2, 4]}
-        directionMin={[-1, -1, -1]}
-        directionMax={[1, 1, 1]}
-        startPositionMin={[0, 0, 0]}
-        startPositionMax={[0, 0, 0]}
+        direction={[[-1, 1], [-1, 1], [-1, 1]]}
+        startPosition={0}
         speed={0.01}
         // friction={0.8}
         shadow={true}
@@ -231,7 +251,7 @@ export const Particles = () => {
         // intensity={10}
         colorNode={stylizedSphereBackdrop}
         castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.)}
-      />
+      /> */}
       {/*
       <VFXParticles
         autoStart={true}
@@ -244,8 +264,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 0.002, 0]}
         lifetime={[0.4, 0.8]}
-        directionMin={[-0.3, 0.5, -0.3]}
-        directionMax={[0.3, 1, 0.3]}
+        direction={[[-0.3, 0.3], [0.5, 1], [-0.3, 0.3]]}
         speed={[0.01, 0.05]}
         friction={0.97}
         appearance={Appearance.GRADIENT}
@@ -263,8 +282,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 1, 0]}
         lifetime={[1.5, 1.5]}
-        directionMin={[-0.3, 0.5, -0.3]}
-        directionMax={[0.3, 1, 0.3]}
+        direction={[[-0.3, 0.3], [0.5, 1], [-0.3, 0.3]]}
         speed={[0, 0]}
         friction={0.7}
         appearance={Appearance.GRADIENT}
@@ -286,8 +304,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, -1, 0]}
         lifetime={[0.4, 0.8]}
-        directionMin={[-1, -1, -1]}
-        directionMax={[1, 1, 1]}
+        direction={[[-1, 1], [-1, 1], [-1, 1]]}
         speed={[0.1, 0.2]}
         friction={0.85}
         appearance={Appearance.CIRCULAR}
@@ -308,8 +325,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, -3, 0]}
         lifetime={[0.4, 0.8]}
-        directionMin={[-0.5, 0.5, -0.5]}
-        directionMax={[0.5, 1, 0.5]}
+        direction={[[-0.5, 0.5], [0.5, 1], [-0.5, 0.5]]}
         speed={[0.01, 0.1]}
         // friction={1.}
 
@@ -319,7 +335,7 @@ export const Particles = () => {
         // emitCount={500}
       /> */}
 
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={500}
         position={[12, -1, 0]}
@@ -331,8 +347,7 @@ export const Particles = () => {
         fadeOpacity={1} // Single value = no randomness
         gravity={[0, -2, 0]}
         lifetime={[1, 2]}
-        directionMin={[-0.5, 0.5, -0.5]}
-        directionMax={[0.5, 1, 0.5]}
+        direction={[[-0.5, 0.5], [0.5, 1], [-0.5, 0.5]]}
         speed={[0.05, 0.1]}
         friction={0.98}
         shadow={true}
@@ -343,37 +358,62 @@ export const Particles = () => {
           [0, Math.PI * 2],
         ]}
         castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.)}
-      />
+      /> */}
 
       {/* Sword geometry particles - orient to velocity */}
       <VFXParticles
-        autoStart={true}
+        ref={swordParticlesRef}
         maxParticles={10000}
-        position={[0, -1, 0]}
+        position={[0, 0, 0]}
         geometry={swordGeometry}
         lighting={Lighting.PHYSICAL}
         size={0.5}
-        delay={0.5}
         colorStart={["#ffdd44", "#ffaa00", "#ff6600"]}
         colorEnd={["#442200", "#221100"]}
         fadeSize={1}
         fadeOpacity={[1, 1]}
-        gravity={[0, 0, 0]}
+        gravity={[0, -1, 0]}
         lifetime={[2, 4]}
-        directionMin={[0, 0, 0.1]}
-        directionMax={[0, 0, 1]}
-        startPositionMin={[-1, -1, -1]}
-        startPositionMax={[1, 1, 1]}
-        speed={0.1}
+        direction={[[0, 0], [1, 1], [0, 0]]}  // Default upward
+        startPosition={0}  // No offset - we control position via spawn
+        speed={0.5}
 
         shadow={true}
         orientToDirection={true}
-        friction={{ intensity: [1., 0.], easing: "easeOut" }}
+        friction={{ intensity: [1., 0.], easing: "easeIn" }}
         intensity={1}
       />
 
-      {/* SPHERE emitter with TURBULENCE - swirling magical orb */}
+      {/* Bouncing spheres with floor collision */}
       <VFXParticles
+        autoStart={true}
+        maxParticles={500}
+        position={[-1, 1, 0]}
+        geometry={sphereGeometry}
+        lighting={Lighting.STANDARD}
+        size={[0.01, 1]}
+        delay={0.1}
+        colorStart={["#ff4466", "#44ff66", "#4466ff", "#ffff44"]}
+        colorEnd={["#662233", "#226633", "#223366", "#666622"]}
+        fadeSize={[1, 1]}
+        fadeOpacity={[1, 0]}
+        gravity={[0, -9.81, 0]}
+        lifetime={[8, 12]}
+        direction={[[-1, 1], [0, 0.5], [-1, 1]]}
+        startPosition={[[-3, 3], [0, 0], [-3, 3]]}
+        speed={0.1}
+        shadow={true}
+        collision={{
+          plane: { y: -2 },
+          bounce: 0.8,
+          friction: 0.95,
+          die: false,
+          sizeBasedGravity: 1.5,  // Larger spheres fall faster & bounce lower
+        }}
+      />
+
+      {/* SPHERE emitter with TURBULENCE - swirling magical orb */}
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={500}
         position={[-12, 0.5, 0]}
@@ -385,8 +425,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 0, 0]}
         lifetime={[2, 3]}
-        directionMin={[0, 0, 0]}
-        directionMax={[0, 0, 0]}
+        direction={[[0, 0], [0, 0], [0, 0]]}
         speed={0}
         friction={0.99}
         appearance={Appearance.CIRCULAR}
@@ -399,10 +438,10 @@ export const Particles = () => {
           frequency: 1.5,
           speed: 0.5
         }}
-      />
+      /> */}
 
       {/* CONE emitter - fire/fountain effect */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={1000}
         position={[-15, -1, 0]}
@@ -414,8 +453,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 0.01, 0]}
         lifetime={[0.5, 1]}
-        directionMin={[0, 1, 0]}
-        directionMax={[0, 1, 0]}
+        direction={[[0, 0], [1, 1], [0, 0]]}
         speed={[0.01, 0.02]}
         friction={0.98}
         appearance={Appearance.GRADIENT}
@@ -430,10 +468,10 @@ export const Particles = () => {
           frequency: 0.2,
           speed: 0.1
         }}
-      />
+      /> */}
 
       {/* DISK emitter - ground smoke/portal effect */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={300}
         position={[-18, -1, 0]}
@@ -445,8 +483,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 1, 0]}
         lifetime={[1.5, 2.5]}
-        directionMin={[-0.2, 0.5, -0.2]}
-        directionMax={[0.2, 1, 0.2]}
+        direction={[[-0.2, 0.2], [0.5, 1], [-0.2, 0.2]]}
         speed={[0.03, 0.08]}
         friction={0.}
         appearance={Appearance.GRADIENT}
@@ -454,10 +491,10 @@ export const Particles = () => {
         emitterShape={EmitterShape.DISK}
         emitterRadius={[0, 1.2]}
         emitterDirection={[0, 0, 1]}
-      />
+      /> */}
 
       {/* EDGE emitter - laser/beam sparks */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={300}
         position={[-21, 0, 0]}
@@ -469,19 +506,17 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, -2, 0]}
         lifetime={[0.3, 0.6]}
-        directionMin={[-0.5, -0.5, -0.5]}
-        directionMax={[0.5, 0.5, 0.5]}
+        direction={[[-0.5, 0.5], [-0.5, 0.5], [-0.5, 0.5]]}
         speed={[0.05, 0.15]}
         friction={0.95}
         appearance={Appearance.CIRCULAR}
         intensity={10}
         emitterShape={EmitterShape.EDGE}
-        startPositionMin={[0, -1, 0]}
-        startPositionMax={[0, 1, 0]}
-      />
+        startPosition={[[0, 0], [-1, 1], [0, 0]]}
+      /> */}
 
       {/* POINT emitter - simple sparks */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
         position={[-24, 0, 0]}
@@ -493,15 +528,14 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, -3, 0]}
         lifetime={[0.5, 1]}
-        directionMin={[-1, 0.5, -1]}
-        directionMax={[1, 1, 1]}
+        direction={[[-1, 1], [0.5, 1], [-1, 1]]}
         speed={[0.1, 0.2]}
         friction={0.98}
         appearance={Appearance.CIRCULAR}
         intensity={8}
         emitterShape={EmitterShape.POINT}
         emitCount={10}
-      />
+      /> */}
 
       {/* TURBULENCE smoke demo - swirling smoke rising */}
       {/* <VFXParticles
@@ -516,8 +550,7 @@ export const Particles = () => {
         fadeOpacity={[0.6, 0]}
         gravity={[0, 0.5, 0]}
         lifetime={[3, 5]}
-        directionMin={[-0.1, 0.3, -0.1]}
-        directionMax={[0.1, 0.5, 0.1]}
+        direction={[[-0.1, 0.1], [0.3, 0.5], [-0.1, 0.1]]}
         speed={[0.02, 0.05]}
         friction={0.995}
         appearance={Appearance.GRADIENT}
@@ -533,7 +566,7 @@ export const Particles = () => {
       /> */}
 
       {/* ATTRACT TO CENTER - simple mode, particles reach center when they die */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={500}
         position={[0, 0, 0]}
@@ -551,10 +584,10 @@ export const Particles = () => {
         emitterShape={EmitterShape.SPHERE}
         emitterRadius={[2, 3]}
         attractToCenter={true}
-      />
+      /> */}
 
       {/* ATTRACT TO CENTER - with turbulence for swirling effect */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={400}
         position={[5, 0, 0]}
@@ -577,8 +610,8 @@ export const Particles = () => {
         //   frequency: 2,
         //   speed: 0.5
         // }}
-      />
-
+      /> */}
+{/* 
       <VFXParticles
         autoStart={true}
         maxParticles={300}
@@ -598,7 +631,7 @@ export const Particles = () => {
         emitterRadius={[0, 2]}
         emitterDirection={[0, 1, 0]}
         attractToCenter={true}
-      />
+      /> */}
 
       {/* SOFT PARTICLES demo - fades near floor/geometry */}
       {/* <VFXParticles
@@ -613,8 +646,7 @@ export const Particles = () => {
         fadeOpacity={[0.8, 1]}
         gravity={[0, -0.5, 0]}
         lifetime={[2, 4]}
-        directionMin={[-0.3, 0.5, -0.3]}
-        directionMax={[0.3, 1, 0.3]}
+        direction={[[-0.3, 0.3], [0.5, 1], [-0.3, 0.3]]}
         speed={[0.02, 0.05]}
         friction={0.99}
         appearance={Appearance.GRADIENT}
@@ -627,7 +659,7 @@ export const Particles = () => {
       /> */}
 
       {/* FRICTION CURVE demo - particles start fast (high friction=0.99), end slow (low friction=0.8) */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={300}
         position={[15, 0, 0]}
@@ -639,8 +671,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, -0.5, 0]}
         lifetime={[2, 3]}
-        directionMin={[-1, 0.5, -1]}
-        directionMax={[1, 1, 1]}
+        direction={[[-1, 1], [0.5, 1], [-1, 1]]}
         speed={[0.15, 0.25]}
         friction={[0.99, 0.7]}
         frictionEasing="easeIn"
@@ -648,10 +679,10 @@ export const Particles = () => {
         intensity={5}
         emitterShape={EmitterShape.POINT}
         emitCount={5}
-      />
+      /> */}
 
       {/* FRICTION CURVE demo 2 - easeOut: starts slow, friction kicks in fast */}
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={200}
         position={[18, 0, 0]}
@@ -663,8 +694,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 0.2, 0]}
         lifetime={[3, 4]}
-        directionMin={[-0.5, 0, -0.5]}
-        directionMax={[0.5, 0.3, 0.5]}
+        direction={[[-0.5, 0.5], [0, 0.3], [-0.5, 0.5]]}
         speed={[0.1, 0.15]}
         friction={[1, 0.85]}
         frictionEasing="easeOut"
@@ -673,7 +703,7 @@ export const Particles = () => {
         emitterShape={EmitterShape.DISK}
         emitterRadius={[0, 0.3]}
         emitterDirection={[0, 1, 0]}
-      />
+      /> */}
     </group>
   );
 };
