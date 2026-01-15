@@ -1,10 +1,17 @@
 import { createRoot } from "react-dom/client";
-import { useState, useCallback, useRef, useEffect, createContext, useContext } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { Appearance, Blending, EmitterShape, Lighting } from "./VFXParticles";
 import * as THREE from "three";
+import { create } from "zustand";
 
-// Context to share flush function with input components
-const DebugPanelContext = createContext(null);
+// Minimal Zustand store - holds flushChanges ref without causing re-renders
+const useDebugPanelStore = create(() => ({
+  flushChangesRef: { current: null }
+}));
+
+// Non-reactive accessors (no subscriptions, no re-renders)
+const getFlushChanges = () => useDebugPanelStore.getState().flushChangesRef.current;
+const setFlushChanges = (fn) => { useDebugPanelStore.getState().flushChangesRef.current = fn; };
 
 // Geometry types for the debug panel
 export const GeometryType = Object.freeze({
@@ -601,6 +608,19 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
   },
+  iconBtn: {
+    background: "transparent",
+    border: "none",
+    color: wrapped.textMuted,
+    cursor: "pointer",
+    fontSize: "14px",
+    padding: "4px 6px",
+    borderRadius: "4px",
+    transition: "all 0.15s ease",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   headerButtons: {
     display: "flex",
     gap: "6px",
@@ -678,7 +698,7 @@ const parse3D = (value) => {
 };
 
 // Section component - uses local state only for UI collapse
-const Section = ({ title, children, defaultOpen = true, optional = false, enabled, onToggleEnabled }) => {
+const Section = ({ title, children, defaultOpen = true, optional = false, enabled, onToggleEnabled, hidden = false }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const [isHovered, setIsHovered] = useState(false);
   const contentRef = useRef(null);
@@ -720,6 +740,9 @@ const Section = ({ title, children, defaultOpen = true, optional = false, enable
     overflow: 'hidden',
     transition: 'height 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
   };
+
+  // If hidden (filtered out by search), don't render
+  if (hidden) return null;
 
   return (
     <div
@@ -766,7 +789,6 @@ const useScrubber = (value, onChange, step = 0.01, min, max) => {
   const startX = useRef(0);
   const startValue = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
-  const ctx = useContext(DebugPanelContext);
 
   const handleMouseDown = useCallback((e) => {
     // Only start scrubbing on left click
@@ -816,14 +838,15 @@ const useScrubber = (value, onChange, step = 0.01, min, max) => {
       document.removeEventListener('mouseup', handleMouseUp);
       
       // Flush pending changes when user lifts mouse after dragging
-      if (wasDragging && ctx?.flushChanges) {
-        ctx.flushChanges();
+      if (wasDragging) {
+        const flushChanges = getFlushChanges();
+        flushChanges?.();
       }
     };
     
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
-  }, [value, onChange, step, min, max, ctx]);
+  }, [value, onChange, step, min, max]);
 
   return { handleMouseDown, hasMoved, isDragging };
 };
@@ -956,7 +979,26 @@ const NumberInput = ({ label, value, onChange, min, max, step = 0.01 }) => {
 
 const RangeInput = ({ label, value, onChange, min = -100, max = 100, step = 0.01 }) => {
   const [minVal, maxVal] = parseRange(value, [0, 0]);
-  const { handleMouseDown } = useScrubber(minVal, (v) => onChange([v, maxVal]), step, min, max);
+  const [linked, setLinked] = useState(false);
+  
+  // When linked, changing one value changes both
+  const handleMinChange = useCallback((v) => {
+    if (linked) {
+      onChange([v, v]);
+    } else {
+      onChange([v, maxVal]);
+    }
+  }, [linked, maxVal, onChange]);
+  
+  const handleMaxChange = useCallback((v) => {
+    if (linked) {
+      onChange([v, v]);
+    } else {
+      onChange([minVal, v]);
+    }
+  }, [linked, minVal, onChange]);
+  
+  const { handleMouseDown } = useScrubber(minVal, handleMinChange, step, min, max);
   
   return (
     <div style={styles.row}>
@@ -971,29 +1013,41 @@ const RangeInput = ({ label, value, onChange, min = -100, max = 100, step = 0.01
         <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', marginRight: '4px' }}>min</span>
         <ScrubInput
           value={minVal}
-          onChange={(v) => onChange([v, maxVal])}
+          onChange={handleMinChange}
           min={min}
           max={max}
           step={step}
           style={styles.rangeInput}
           placeholder="min"
         />
-        <span 
-          style={{ 
-            ...styles.rangeSeparator, 
+        <button
+          onClick={() => {
+            if (!linked) {
+              // When linking, set both to average or min value
+              const avg = (minVal + maxVal) / 2;
+              onChange([avg, avg]);
+            }
+            setLinked(!linked);
+          }}
+          style={{
+            background: linked ? 'rgba(249, 115, 22, 0.2)' : 'transparent',
+            border: `1px solid ${linked ? 'rgba(249, 115, 22, 0.5)' : 'rgba(255, 255, 255, 0.15)'}`,
+            color: linked ? 'rgba(249, 115, 22, 0.9)' : 'rgba(255, 255, 255, 0.4)',
             cursor: 'pointer',
+            fontSize: '11px',
             padding: '2px 4px',
             borderRadius: '3px',
-            transition: 'background 0.15s',
+            transition: 'all 0.15s',
+            margin: '0 2px',
+            lineHeight: 1,
           }}
-          onClick={() => onChange([minVal, minVal])}
-          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          title="Click to set max = min"
-        >→</span>
+          title={linked ? "Unlink min/max (values change together)" : "Link min/max (values change together)"}
+        >
+          {linked ? '🔗' : '⛓️‍💥'}
+        </button>
         <ScrubInput
           value={maxVal}
-          onChange={(v) => onChange([minVal, v])}
+          onChange={handleMaxChange}
           min={min}
           max={max}
           step={step}
@@ -1486,10 +1540,11 @@ const ColorArrayInput = ({ label, value, onChange }) => {
 const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
   // value = { points: [{ pos: [x, y], handleIn: [dx, dy], handleOut: [dx, dy] }, ...] }
   // Start point (0, 0) has handleOut only, end point (1, 1) has handleIn only
+  // Default curve: 1→0 (fade out behavior - start full, end at zero)
   const defaultValue = { 
     points: [
-      { pos: [0, 0], handleOut: [0.3, 0] },
-      { pos: [1, 1], handleIn: [-0.3, 0] }
+      { pos: [0, 1], handleOut: [0.3, 0] },
+      { pos: [1, 0], handleIn: [-0.3, 0] }
     ] 
   };
   
@@ -2149,25 +2204,31 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
   
   // Preset curves with handles
   const presets = [
+    // Fade OUT presets (1→0): start full, end at zero
     { name: 'linear', points: [
-      { pos: [0, 0], handleOut: [0.33, 0.33] },
-      { pos: [1, 1], handleIn: [-0.33, -0.33] }
+      { pos: [0, 1], handleOut: [0.33, 0] },
+      { pos: [1, 0], handleIn: [-0.33, 0] }
     ]},
     { name: 'ease', points: [
-      { pos: [0, 0], handleOut: [0.25, 0.1] },
-      { pos: [1, 1], handleIn: [-0.25, 0] }
+      { pos: [0, 1], handleOut: [0.25, -0.1] },
+      { pos: [1, 0], handleIn: [-0.25, 0] }
     ]},
     { name: 'ease-in', points: [
-      { pos: [0, 0], handleOut: [0.42, 0] },
-      { pos: [1, 1], handleIn: [0, 0] }
+      { pos: [0, 1], handleOut: [0.42, 0] },
+      { pos: [1, 0], handleIn: [0, 0] }
     ]},
     { name: 'ease-out', points: [
-      { pos: [0, 0], handleOut: [0, 0] },
-      { pos: [1, 1], handleIn: [-0.58, 0] }
+      { pos: [0, 1], handleOut: [0, 0] },
+      { pos: [1, 0], handleIn: [-0.58, 0] }
     ]},
     { name: 'ease-in-out', points: [
-      { pos: [0, 0], handleOut: [0.42, 0] },
-      { pos: [1, 1], handleIn: [-0.58, 0] }
+      { pos: [0, 1], handleOut: [0.42, 0] },
+      { pos: [1, 0], handleIn: [-0.58, 0] }
+    ]},
+    // Fade IN presets (0→1): start at zero, end full
+    { name: 'fade-in', points: [
+      { pos: [0, 0], handleOut: [0.33, 0.33] },
+      { pos: [1, 1], handleIn: [-0.33, 0] }
     ]},
     { name: 'bounce', points: [
       // Bounce out - ball dropping and bouncing, sharp peaks at value 1
@@ -2830,6 +2891,16 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
   const debounceTimerRef = useRef(null);
   const DEBOUNCE_DELAY = 500; // 0.5s
   
+  // Search/filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Undo/Redo state
+  const historyRef = useRef([JSON.parse(JSON.stringify(initialValues))]); // Stack of past states
+  const [historyIndex, setHistoryIndex] = useState(0); // Current position in history
+  const [historyLength, setHistoryLength] = useState(1); // Track length for canRedo calculation
+  const MAX_HISTORY = 50; // Limit history size
+  const isUndoingRef = useRef(false); // Flag to prevent recording during undo/redo
+  
   // Track previous initialValues to detect external updates
   const prevInitialValuesRef = useRef(initialValues);
   
@@ -2907,12 +2978,112 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
     }
   }, [hasPendingChanges, flushChanges]);
 
+  // Record state for undo/redo (debounced to batch rapid changes)
+  const recordHistoryTimeoutRef = useRef(null);
+  const recordHistory = useCallback(() => {
+    if (isUndoingRef.current) return;
+    
+    // Debounce history recording to batch rapid changes
+    if (recordHistoryTimeoutRef.current) {
+      clearTimeout(recordHistoryTimeoutRef.current);
+    }
+    recordHistoryTimeoutRef.current = setTimeout(() => {
+      const currentState = JSON.parse(JSON.stringify(valuesRef.current));
+      const lastState = historyRef.current[historyIndex];
+      
+      // Only record if state actually changed
+      if (JSON.stringify(currentState) !== JSON.stringify(lastState)) {
+        // Remove any future states if we're not at the end
+        historyRef.current = historyRef.current.slice(0, historyIndex + 1);
+        
+        // Add new state
+        historyRef.current.push(currentState);
+        const newLength = historyRef.current.length;
+        const newIndex = newLength - 1;
+        
+        // Limit history size
+        if (newLength > MAX_HISTORY) {
+          historyRef.current.shift();
+          setHistoryIndex(newIndex - 1);
+          setHistoryLength(newLength - 1);
+        } else {
+          setHistoryIndex(newIndex);
+          setHistoryLength(newLength);
+        }
+      }
+    }, 300); // 300ms debounce
+  }, [historyIndex]);
+
+  // Undo function
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      isUndoingRef.current = true;
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      const previousState = JSON.parse(JSON.stringify(historyRef.current[newIndex]));
+      valuesRef.current = previousState;
+      
+      // Mark all keys as dirty and flush
+      for (const key in previousState) {
+        dirtyKeysRef.current.add(key);
+      }
+      flushChanges();
+      forceUpdate(n => n + 1);
+      
+      setTimeout(() => { isUndoingRef.current = false; }, 50);
+    }
+  }, [flushChanges, historyIndex]);
+
+  // Redo function
+  const redo = useCallback(() => {
+    if (historyIndex < historyRef.current.length - 1) {
+      isUndoingRef.current = true;
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      const nextState = JSON.parse(JSON.stringify(historyRef.current[newIndex]));
+      valuesRef.current = nextState;
+      
+      // Mark all keys as dirty and flush
+      for (const key in nextState) {
+        dirtyKeysRef.current.add(key);
+      }
+      flushChanges();
+      forceUpdate(n => n + 1);
+      
+      setTimeout(() => { isUndoingRef.current = false; }, 50);
+    }
+  }, [flushChanges, historyIndex]);
+
+  // Check if undo/redo is available (use state instead of refs for render)
+  const canUndo = historyIndex > 0;
+  const canRedo = historyIndex < historyLength - 1;
+
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ignore if typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
+
   const update = useCallback((key, value) => {
     valuesRef.current = { ...valuesRef.current, [key]: value };
     dirtyKeysRef.current.add(key);
     scheduleUpdate();
+    recordHistory();
     forceUpdate(n => n + 1);
-  }, [scheduleUpdate]);
+  }, [scheduleUpdate, recordHistory]);
 
   const updateNested = useCallback((parentKey, childKey, value) => {
     // Get the existing parent object, defaulting to empty object if null/undefined
@@ -2926,8 +3097,9 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
     };
     dirtyKeysRef.current.add(parentKey);
     scheduleUpdate();
+    recordHistory();
     forceUpdate(n => n + 1);
-  }, [scheduleUpdate]);
+  }, [scheduleUpdate, recordHistory]);
 
   // Helper to update geometry args and trigger geometry recreation
   const updateGeometryArg = useCallback((key, value) => {
@@ -2941,11 +3113,15 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
     };
     dirtyKeysRef.current.add('geometryArgs');
     scheduleUpdate();
+    recordHistory();
     forceUpdate(n => n + 1);
-  }, [scheduleUpdate]);
+  }, [scheduleUpdate, recordHistory]);
 
-  // Context value for child components
-  const contextValue = { flushChanges };
+  // Set flushChanges ref in store for child components to access
+  useEffect(() => {
+    setFlushChanges(flushChanges);
+    return () => setFlushChanges(null);
+  }, [flushChanges]);
 
   // Resize handlers
   const handleResizeStart = useCallback((e, type) => {
@@ -2997,6 +3173,32 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
 
   const values = valuesRef.current;
   
+  // Search filter helper - maps section titles to their searchable keywords
+  const sectionKeywords = {
+    'Basic': ['basic', 'max particles', 'position', 'emit', 'count', 'delay', 'auto start'],
+    'Easing Curve (Test)': ['easing', 'curve', 'test'],
+    'Size': ['size', 'range', 'fade', 'scale'],
+    'Colors': ['color', 'colors', 'start', 'end', 'opacity', 'fade', 'intensity', 'rgb', 'hex'],
+    'Physics': ['physics', 'gravity', 'speed', 'lifetime', 'velocity', 'friction', 'curve'],
+    'Direction & Start Position': ['direction', 'position', 'offset', 'start'],
+    'Rotation': ['rotation', 'rotate', 'spin', 'orient', 'stretch', 'axis'],
+    'Geometry': ['geometry', 'mesh', 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'capsule'],
+    'Rendering': ['rendering', 'appearance', 'blending', 'lighting', 'shadow', 'material'],
+    'Emitter Shape': ['emitter', 'shape', 'radius', 'angle', 'height', 'direction', 'surface'],
+    'Turbulence': ['turbulence', 'noise', 'frequency', 'intensity', 'speed'],
+    'Collision': ['collision', 'bounce', 'plane', 'friction', 'die', 'gravity'],
+    'Effects': ['effects', 'soft', 'particles', 'attract', 'center', 'soft particles', 'distance'],
+  };
+  
+  // Check if a section should be visible based on search query
+  const matchesSearch = (sectionTitle) => {
+    if (!searchQuery.trim()) return true;
+    const query = searchQuery.toLowerCase();
+    const keywords = sectionKeywords[sectionTitle] || [sectionTitle.toLowerCase()];
+    return keywords.some(keyword => keyword.includes(query)) || 
+           sectionTitle.toLowerCase().includes(query);
+  };
+  
   const containerStyle = {
     ...styles.container,
     width: `${panelSize.width}px`,
@@ -3004,7 +3206,6 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
   };
 
   return (
-    <DebugPanelContext.Provider value={contextValue}>
     <div style={containerStyle}>
       {/* Resize handles */}
       {!isMinimized && (
@@ -3031,6 +3232,31 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           <span>particles</span>
         </div>
         <div style={styles.headerButtons}>
+          {/* Undo/Redo buttons */}
+          <button
+            style={{
+              ...styles.iconBtn,
+              opacity: canUndo ? 1 : 0.3,
+              cursor: canUndo ? 'pointer' : 'default',
+            }}
+            onClick={undo}
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+          >
+            ↶
+          </button>
+          <button
+            style={{
+              ...styles.iconBtn,
+              opacity: canRedo ? 1 : 0.3,
+              cursor: canRedo ? 'pointer' : 'default',
+            }}
+            onClick={redo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Y)"
+          >
+            ↷
+          </button>
           {hasPendingChanges && <LoadingSpinner />}
           <button 
             style={{
@@ -3068,11 +3294,68 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </button>
         </div>
       </div>
+      
+      {/* Search/Filter bar */}
+      {!isMinimized && (
+        <div style={{
+          padding: '8px 12px',
+          borderBottom: `1px solid ${wrapped.border}`,
+          background: 'rgba(0, 0, 0, 0.2)',
+        }}>
+          <div style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+          }}>
+            <span style={{
+              position: 'absolute',
+              left: '10px',
+              color: 'rgba(255, 255, 255, 0.3)',
+              fontSize: '12px',
+              pointerEvents: 'none',
+            }}>🔍</span>
+            <input
+              type="text"
+              placeholder="Search properties..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '8px 10px 8px 32px',
+                background: 'rgba(0, 0, 0, 0.3)',
+                border: `1px solid ${wrapped.border}`,
+                borderRadius: '6px',
+                color: 'rgba(255, 255, 255, 0.9)',
+                fontSize: '12px',
+                fontFamily: "'JetBrains Mono', monospace",
+                outline: 'none',
+              }}
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  background: 'none',
+                  border: 'none',
+                  color: 'rgba(255, 255, 255, 0.4)',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  padding: '2px 6px',
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {!isMinimized && (
         <div style={styles.content}>
           {/* Basic Settings */}
-          <Section title="Basic" defaultOpen={true}>
+          <Section title="Basic" defaultOpen={true} hidden={!matchesSearch('Basic')}>
             <NumberInput
               label="Max Particles"
               value={values.maxParticles || 10000}
@@ -3102,7 +3385,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Easing Curve Test */}
-          <Section title="Easing Curve (Test)" defaultOpen={false}>
+          <Section title="Easing Curve (Test)" defaultOpen={false} hidden={!matchesSearch('Easing Curve (Test)')}>
             <EasingCurveEditor
               label=""
               value={values.easingCurve}
@@ -3111,7 +3394,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Size */}
-          <Section title="Size" defaultOpen={false}>
+          <Section title="Size" defaultOpen={false} hidden={!matchesSearch('Size')}>
             <RangeInput
               label="Size Range"
               value={values.size}
@@ -3133,8 +3416,8 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
                 checked={!!values.fadeSizeCurve}
                 onChange={(e) => update("fadeSizeCurve", e.target.checked ? {
                   points: [
-                    { pos: [0, 0], handleOut: [0.33, 0.33] },
-                    { pos: [1, 1], handleIn: [-0.33, -0.33] }
+                    { pos: [0, 1], handleOut: [0.33, 0] },
+                    { pos: [1, 0], handleIn: [-0.33, 0] }
                   ]
                 } : null)}
                 style={{ accentColor: wrapped.accent }}
@@ -3150,7 +3433,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Colors */}
-          <Section title="Colors" defaultOpen={false}>
+          <Section title="Colors" defaultOpen={false} hidden={!matchesSearch('Colors')}>
             <ColorArrayInput
               label="Start Colors"
               value={values.colorStart}
@@ -3186,8 +3469,8 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
                 checked={!!values.fadeOpacityCurve}
                 onChange={(e) => update("fadeOpacityCurve", e.target.checked ? {
                   points: [
-                    { pos: [0, 0], handleOut: [0.33, 0.33] },
-                    { pos: [1, 1], handleIn: [-0.33, -0.33] }
+                    { pos: [0, 1], handleOut: [0.33, 0] },
+                    { pos: [1, 0], handleIn: [-0.33, 0] }
                   ]
                 } : null)}
                 style={{ accentColor: wrapped.accent }}
@@ -3211,7 +3494,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Physics */}
-          <Section title="Physics" defaultOpen={false}>
+          <Section title="Physics" defaultOpen={false} hidden={!matchesSearch('Physics')}>
             <Vec3Input label="Gravity" value={values.gravity} onChange={(v) => update("gravity", v)} />
             <RangeInput
               label="Speed Range"
@@ -3267,7 +3550,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Direction & Position */}
-          <Section title="Direction & Start Position" defaultOpen={false}>
+          <Section title="Direction & Start Position" defaultOpen={false} hidden={!matchesSearch('Direction & Start Position')}>
             <Range3DInput label="Direction (XYZ ranges)" value={values.direction} onChange={(v) => update("direction", v)} />
             <Range3DInput
               label="Start Position Offset (XYZ)"
@@ -3277,7 +3560,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Rotation */}
-          <Section title="Rotation" defaultOpen={false}>
+          <Section title="Rotation" defaultOpen={false} hidden={!matchesSearch('Rotation')}>
             <Range3DInput label="Rotation (rad)" value={values.rotation} onChange={(v) => update("rotation", v)} />
             <Range3DInput
               label="Rotation Speed (rad/s)"
@@ -3336,7 +3619,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Geometry */}
-          <Section title="Geometry" defaultOpen={false}>
+          <Section title="Geometry" defaultOpen={false} hidden={!matchesSearch('Geometry')}>
             <SelectInput
               label="Type"
               value={values.geometryType || GeometryType.NONE}
@@ -3459,7 +3742,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Appearance */}
-          <Section title="Appearance" defaultOpen={false}>
+          <Section title="Rendering" defaultOpen={false} hidden={!matchesSearch('Rendering')}>
             <SelectInput
               label="Appearance"
               value={values.appearance || Appearance.GRADIENT}
@@ -3487,7 +3770,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Emitter Shape */}
-          <Section title="Emitter Shape" defaultOpen={false}>
+          <Section title="Emitter Shape" defaultOpen={false} hidden={!matchesSearch('Emitter Shape')}>
             <SelectInput
               label="Shape"
               value={values.emitterShape || EmitterShape.BOX}
@@ -3544,6 +3827,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
             onToggleEnabled={(enabled) =>
               update("turbulence", enabled ? { intensity: 0.5, frequency: 1, speed: 1 } : null)
             }
+            hidden={!matchesSearch('Turbulence')}
           >
             <NumberInput
               label="Intensity"
@@ -3580,6 +3864,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
                 enabled ? { plane: { y: 0 }, bounce: 0.3, friction: 0.8, die: false, sizeBasedGravity: 0 } : null
               )
             }
+            hidden={!matchesSearch('Collision')}
           >
             <NumberInput
               label="Plane Y"
@@ -3625,6 +3910,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
             optional={true}
             enabled={values.softParticles}
             onToggleEnabled={(enabled) => update("softParticles", enabled)}
+            hidden={!matchesSearch('Effects')}
           >
             <NumberInput
               label="Soft Distance"
@@ -3636,7 +3922,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Attract to Center */}
-          <Section title="Attract to Center" defaultOpen={false}>
+          <Section title="Effects" defaultOpen={false} hidden={!matchesSearch('Effects')}>
             <CheckboxInput
               label="Attract to Center"
               value={values.attractToCenter}
@@ -3646,7 +3932,6 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
         </div>
       )}
     </div>
-    </DebugPanelContext.Provider>
   );
 };
 

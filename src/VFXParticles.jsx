@@ -195,9 +195,9 @@ export const bakeCurveToArray = (curveData, resolution = CURVE_RESOLUTION) => {
   
   // Validate curve data structure
   if (!curveData?.points || !Array.isArray(curveData.points) || curveData.points.length < 2) {
-    // Default linear curve
+    // Default linear curve: 1→0 (fade out over lifetime, matching default behavior)
     for (let i = 0; i < resolution; i++) {
-      data[i] = i / (resolution - 1);
+      data[i] = 1 - (i / (resolution - 1));
     }
     return data;
   }
@@ -206,9 +206,9 @@ export const bakeCurveToArray = (curveData, resolution = CURVE_RESOLUTION) => {
   const firstPoint = curveData.points[0];
   const lastPoint = curveData.points[curveData.points.length - 1];
   if (!firstPoint?.pos || !lastPoint?.pos || !Array.isArray(firstPoint.pos) || !Array.isArray(lastPoint.pos)) {
-    // Fallback to linear
+    // Fallback to linear: 1→0 (fade out)
     for (let i = 0; i < resolution; i++) {
-      data[i] = i / (resolution - 1);
+      data[i] = 1 - (i / (resolution - 1));
     }
     return data;
   }
@@ -244,11 +244,12 @@ export const createCombinedCurveTexture = (sizeCurve, opacityCurve, velocityCurv
   return tex;
 };
 
-// Default linear curve (no easing)
+// Default linear curve: starts at 1, ends at 0 (fade out behavior)
+// Curve Y-value is the DIRECT multiplier: y=1 means full, y=0 means none
 const DEFAULT_LINEAR_CURVE = {
   points: [
-    { pos: [0, 0], handleOut: [0.33, 0] },
-    { pos: [1, 1], handleIn: [-0.33, 0] }
+    { pos: [0, 1], handleOut: [0.33, 0] },
+    { pos: [1, 0], handleIn: [-0.33, 0] }
   ]
 };
 
@@ -1237,14 +1238,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
     const intensifiedColor = currentColor.mul(uniforms.intensity);
     
     // Sample combined curve texture (R=size, G=opacity, B=velocity)
-    // Each channel contains the eased interpolation factor at the given progress
+    // Each channel contains the DIRECT value at the given progress (not an interpolation factor)
+    // Curve Y-value IS the actual multiplier: 0=none, 1=full
     const curveSample = texture(curveTexture, vec2(progress, float(0.5)));
-    const fadeSizeEased = curveSample.x;     // R channel - size curve
-    const fadeOpacityEased = curveSample.y;  // G channel - opacity curve
+    const sizeMultiplier = curveSample.x;     // R channel - size curve value
+    const opacityMultiplier = curveSample.y;  // G channel - opacity curve value
     // B channel (velocity) is used in compute shader
-    
-    const sizeMultiplier = mix(uniforms.fadeSizeStart, uniforms.fadeSizeEnd, fadeSizeEased);
-    const opacityMultiplier = mix(uniforms.fadeOpacityStart, uniforms.fadeOpacityEnd, fadeOpacityEased);
     
     // Calculate UV - with flipbook support
     let sampleUV = uv();

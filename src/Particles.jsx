@@ -155,7 +155,7 @@ export const Particles = () => {
 
   return (
     <group>
-      <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
         position={[-9, 0, 0]}
@@ -184,8 +184,8 @@ export const Particles = () => {
         // intensity={10}
         // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
         // backdropNode={_distortionBackdrop}
-      />
-       <VFXParticles
+      /> */}
+       {/* <VFXParticles
         autoStart={true}
         maxParticles={1000}
         position={[-9, 0, 0]}
@@ -207,7 +207,7 @@ export const Particles = () => {
         // intensity={10}
         opacityNode={({ progress }) => smoothstep(0, 0.9, progress.oneMinus())}
         backdropNode={distortionBackdrop}
-      />
+      /> */}
       {/*
       <VFXParticles
         autoStart={true}
