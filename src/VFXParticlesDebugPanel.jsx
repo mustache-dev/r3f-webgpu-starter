@@ -1447,6 +1447,582 @@ const ColorArrayInput = ({ label, value, onChange }) => {
   );
 };
 
+// Easing Curve Editor Component - bezier curve with handles
+const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
+  // value = { points: [{ pos: [x, y], handleIn: [dx, dy], handleOut: [dx, dy] }, ...] }
+  // Start point (0, 0) has handleOut only, end point (1, 1) has handleIn only
+  const defaultValue = { 
+    points: [
+      { pos: [0, 0], handleOut: [0.3, 0] },
+      { pos: [1, 1], handleIn: [-0.3, 0] }
+    ] 
+  };
+  
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  // dragging: null, or { type: 'point' | 'handleIn' | 'handleOut', index: number }
+  const draggingRef = useRef(null);
+  const localDataRef = useRef(value?.points || defaultValue.points);
+  const [, forceUpdate] = useState(0);
+  const [hoverItem, setHoverItem] = useState(null); // { type, index }
+  
+  // Logical size (CSS pixels)
+  const SIZE = 260;
+  const PADDING = 30;
+  const GRAPH_SIZE = SIZE - 2 * PADDING;
+  
+  // Sync with prop
+  useEffect(() => {
+    if (value?.points) {
+      localDataRef.current = value.points;
+      forceUpdate(n => n + 1);
+    }
+  }, [value]);
+  
+  const points = localDataRef.current;
+  
+  // Convert curve coords (0-1) to canvas coords
+  const toCanvas = useCallback((x, y) => ({
+    x: PADDING + x * GRAPH_SIZE,
+    y: SIZE - PADDING - y * GRAPH_SIZE,
+  }), [GRAPH_SIZE]);
+  
+  // Convert canvas coords to curve coords (0-1)
+  const fromCanvas = useCallback((cx, cy) => ({
+    x: (cx - PADDING) / GRAPH_SIZE,
+    y: (SIZE - PADDING - cy) / GRAPH_SIZE,
+  }), [GRAPH_SIZE]);
+  
+  // Clamp value to 0-1
+  const clampY = (y) => Math.max(0, Math.min(1, y));
+  
+  // Draw the curve with HiDPI support
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas buffer size for sharp rendering
+    canvas.width = SIZE * dpr;
+    canvas.height = SIZE * dpr;
+    ctx.scale(dpr, dpr);
+    
+    // Clear
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    
+    // Background
+    const bgGrad = ctx.createLinearGradient(0, 0, SIZE, SIZE);
+    bgGrad.addColorStop(0, 'rgba(18, 18, 22, 0.98)');
+    bgGrad.addColorStop(1, 'rgba(8, 8, 10, 0.98)');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, SIZE, SIZE);
+    
+    // Grid lines
+    ctx.strokeStyle = 'rgba(249, 115, 22, 0.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const pos = PADDING + (i / 4) * GRAPH_SIZE;
+      ctx.beginPath();
+      ctx.moveTo(pos, PADDING);
+      ctx.lineTo(pos, SIZE - PADDING);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(PADDING, pos);
+      ctx.lineTo(SIZE - PADDING, pos);
+      ctx.stroke();
+    }
+    
+    // Outer box
+    ctx.strokeStyle = 'rgba(249, 115, 22, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(PADDING, PADDING, GRAPH_SIZE, GRAPH_SIZE);
+    
+    // Diagonal reference line (linear)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PADDING, SIZE - PADDING);
+    ctx.lineTo(SIZE - PADDING, PADDING);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    const pts = localDataRef.current;
+    
+    // Draw bezier curves between consecutive points
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i];
+      const p1 = pts[i + 1];
+      
+      // Control points for this segment
+      const cp0 = toCanvas(p0.pos[0], p0.pos[1]);
+      const cp1 = toCanvas(
+        p0.pos[0] + (p0.handleOut?.[0] || 0),
+        p0.pos[1] + (p0.handleOut?.[1] || 0)
+      );
+      const cp2 = toCanvas(
+        p1.pos[0] + (p1.handleIn?.[0] || 0),
+        p1.pos[1] + (p1.handleIn?.[1] || 0)
+      );
+      const cp3 = toCanvas(p1.pos[0], p1.pos[1]);
+      
+      // Glow
+      ctx.strokeStyle = 'rgba(249, 115, 22, 0.25)';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cp0.x, cp0.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, cp3.x, cp3.y);
+      ctx.stroke();
+      
+      // Main curve
+      ctx.strokeStyle = wrapped.accent;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cp0.x, cp0.y);
+      ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, cp3.x, cp3.y);
+      ctx.stroke();
+    }
+    
+    // Draw handles and points
+    pts.forEach((pt, idx) => {
+      const pos = toCanvas(pt.pos[0], pt.pos[1]);
+      const isFirst = idx === 0;
+      const isLast = idx === pts.length - 1;
+      const isDraggingPoint = draggingRef.current?.type === 'point' && draggingRef.current?.index === idx;
+      const isHoveringPoint = hoverItem?.type === 'point' && hoverItem?.index === idx;
+      
+      // Draw handleOut (for all except last)
+      if (!isLast && pt.handleOut) {
+        const handlePos = toCanvas(
+          pt.pos[0] + pt.handleOut[0],
+          pt.pos[1] + pt.handleOut[1]
+        );
+        const isDraggingHandle = draggingRef.current?.type === 'handleOut' && draggingRef.current?.index === idx;
+        const isHoveringHandle = hoverItem?.type === 'handleOut' && hoverItem?.index === idx;
+        
+        // Handle line
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+        ctx.lineTo(handlePos.x, handlePos.y);
+        ctx.stroke();
+        
+        // Handle point
+        ctx.fillStyle = isDraggingHandle ? '#fff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        ctx.beginPath();
+        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      
+      // Draw handleIn (for all except first)
+      if (!isFirst && pt.handleIn) {
+        const handlePos = toCanvas(
+          pt.pos[0] + pt.handleIn[0],
+          pt.pos[1] + pt.handleIn[1]
+        );
+        const isDraggingHandle = draggingRef.current?.type === 'handleIn' && draggingRef.current?.index === idx;
+        const isHoveringHandle = hoverItem?.type === 'handleIn' && hoverItem?.index === idx;
+        
+        // Handle line
+        ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+        ctx.lineTo(handlePos.x, handlePos.y);
+        ctx.stroke();
+        
+        // Handle point
+        ctx.fillStyle = isDraggingHandle ? '#fff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        ctx.beginPath();
+        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      
+      // Main point
+      ctx.fillStyle = isDraggingPoint ? '#fff' : isHoveringPoint ? wrapped.accentLight : wrapped.accent;
+      ctx.shadowColor = wrapped.accent;
+      ctx.shadowBlur = isDraggingPoint ? 15 : 8;
+      ctx.beginPath();
+      ctx.arc(pos.x, pos.y, isDraggingPoint ? 10 : 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
+    
+    // Labels
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.font = "11px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.fillText('0', PADDING, SIZE - PADDING + 18);
+    ctx.fillText('1', SIZE - PADDING, SIZE - PADDING + 18);
+    ctx.textAlign = 'right';
+    ctx.fillText('0', PADDING - 8, SIZE - PADDING + 4);
+    ctx.fillText('1', PADDING - 8, PADDING + 4);
+    
+    // Axis labels
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.font = "9px 'JetBrains Mono', monospace";
+    ctx.textAlign = 'center';
+    ctx.fillText('time →', SIZE / 2, SIZE - 6);
+    
+    ctx.save();
+    ctx.translate(10, SIZE / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('value →', 0, 0);
+    ctx.restore();
+    
+  }, [toCanvas, hoverItem, GRAPH_SIZE]);
+  
+  // Draw on mount and updates
+  useEffect(() => {
+    draw();
+  }, [draw]);
+  
+  // Find what's at a position
+  const hitTest = useCallback((mx, my) => {
+    const pts = localDataRef.current;
+    
+    // Check handles first (smaller targets)
+    for (let i = 0; i < pts.length; i++) {
+      const pt = pts[i];
+      
+      // HandleOut
+      if (pt.handleOut && i < pts.length - 1) {
+        const handlePos = toCanvas(
+          pt.pos[0] + pt.handleOut[0],
+          pt.pos[1] + pt.handleOut[1]
+        );
+        if (Math.hypot(mx - handlePos.x, my - handlePos.y) < 12) {
+          return { type: 'handleOut', index: i };
+        }
+      }
+      
+      // HandleIn
+      if (pt.handleIn && i > 0) {
+        const handlePos = toCanvas(
+          pt.pos[0] + pt.handleIn[0],
+          pt.pos[1] + pt.handleIn[1]
+        );
+        if (Math.hypot(mx - handlePos.x, my - handlePos.y) < 12) {
+          return { type: 'handleIn', index: i };
+        }
+      }
+    }
+    
+    // Then check points
+    for (let i = 0; i < pts.length; i++) {
+      const pos = toCanvas(pts[i].pos[0], pts[i].pos[1]);
+      if (Math.hypot(mx - pos.x, my - pos.y) < 15) {
+        return { type: 'point', index: i };
+      }
+    }
+    
+    return null;
+  }, [toCanvas]);
+  
+  // Document-level mouse handlers for reliable dragging
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (!canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      
+      if (draggingRef.current !== null) {
+        const { x, y } = fromCanvas(mx, my);
+        const pts = localDataRef.current.map(p => ({ ...p }));
+        const { type, index } = draggingRef.current;
+        
+        if (type === 'point') {
+          const isFirst = index === 0;
+          const isLast = index === pts.length - 1;
+          
+          if (isFirst) {
+            pts[index] = { ...pts[index], pos: [0, clampY(y)] };
+          } else if (isLast) {
+            pts[index] = { ...pts[index], pos: [1, clampY(y)] };
+          } else {
+            // Keep x sorted between neighbors
+            const minX = pts[index - 1].pos[0] + 0.02;
+            const maxX = pts[index + 1].pos[0] - 0.02;
+            pts[index] = { 
+              ...pts[index], 
+              pos: [Math.max(minX, Math.min(maxX, x)), clampY(y)] 
+            };
+          }
+        } else if (type === 'handleOut') {
+          const pt = pts[index];
+          const dx = x - pt.pos[0];
+          const dy = y - pt.pos[1];
+          pts[index] = { ...pt, handleOut: [dx, dy] };
+        } else if (type === 'handleIn') {
+          const pt = pts[index];
+          const dx = x - pt.pos[0];
+          const dy = y - pt.pos[1];
+          pts[index] = { ...pt, handleIn: [dx, dy] };
+        }
+        
+        localDataRef.current = pts;
+        draw();
+      } else if (mx >= 0 && mx <= SIZE && my >= 0 && my <= SIZE) {
+        const hit = hitTest(mx, my);
+        if (JSON.stringify(hit) !== JSON.stringify(hoverItem)) {
+          setHoverItem(hit);
+        }
+      }
+    };
+    
+    const handleMouseUp = () => {
+      if (draggingRef.current !== null) {
+        onChange?.({ points: localDataRef.current });
+        draggingRef.current = null;
+        document.body.style.cursor = '';
+        draw();
+      }
+    };
+    
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [draw, fromCanvas, onChange, hitTest, hoverItem]);
+  
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    
+    const hit = hitTest(mx, my);
+    
+    if (hit) {
+      draggingRef.current = hit;
+      document.body.style.cursor = 'grabbing';
+      draw();
+      return;
+    }
+    
+    // Double-click to add a point
+    if (e.detail === 2) {
+      const { x, y } = fromCanvas(mx, my);
+      if (x > 0.02 && x < 0.98) {
+        const pts = [...localDataRef.current];
+        let insertIdx = 1;
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i].pos[0] > x) {
+            insertIdx = i;
+            break;
+          }
+        }
+        // Create new point with handles
+        const newPoint = {
+          pos: [x, clampY(y)],
+          handleIn: [-0.1, 0],
+          handleOut: [0.1, 0]
+        };
+        pts.splice(insertIdx, 0, newPoint);
+        localDataRef.current = pts;
+        onChange?.({ points: pts });
+        draw();
+      }
+    }
+  }, [draw, fromCanvas, onChange, hitTest]);
+  
+  const handleContextMenu = useCallback((e) => {
+    e.preventDefault();
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    
+    const pts = localDataRef.current;
+    
+    // Check if right-clicking on a point (not first or last)
+    for (let i = 1; i < pts.length - 1; i++) {
+      const pos = toCanvas(pts[i].pos[0], pts[i].pos[1]);
+      if (Math.hypot(mx - pos.x, my - pos.y) < 15) {
+        const newPts = pts.filter((_, idx) => idx !== i);
+        localDataRef.current = newPts;
+        onChange?.({ points: newPts });
+        setHoverItem(null);
+        draw();
+        return;
+      }
+    }
+  }, [draw, onChange, toCanvas]);
+  
+  const handleMouseLeave = useCallback(() => {
+    if (draggingRef.current === null) {
+      setHoverItem(null);
+    }
+  }, []);
+  
+  // Preset curves with handles
+  const presets = [
+    { name: 'linear', points: [
+      { pos: [0, 0], handleOut: [0.33, 0.33] },
+      { pos: [1, 1], handleIn: [-0.33, -0.33] }
+    ]},
+    { name: 'ease', points: [
+      { pos: [0, 0], handleOut: [0.25, 0.1] },
+      { pos: [1, 1], handleIn: [-0.25, 0] }
+    ]},
+    { name: 'ease-in', points: [
+      { pos: [0, 0], handleOut: [0.42, 0] },
+      { pos: [1, 1], handleIn: [0, 0] }
+    ]},
+    { name: 'ease-out', points: [
+      { pos: [0, 0], handleOut: [0, 0] },
+      { pos: [1, 1], handleIn: [-0.58, 0] }
+    ]},
+    { name: 'ease-in-out', points: [
+      { pos: [0, 0], handleOut: [0.42, 0] },
+      { pos: [1, 1], handleIn: [-0.58, 0] }
+    ]},
+    { name: 'bounce', points: [
+      { pos: [0, 0], handleOut: [0.2, 0.6] },
+      { pos: [0.5, 0.8], handleIn: [-0.15, 0], handleOut: [0.15, 0] },
+      { pos: [1, 1], handleIn: [-0.1, 0.2] }
+    ]},
+  ];
+  
+  return (
+    <div style={{ marginBottom: '12px' }} ref={containerRef}>
+      {label && <div style={{ ...styles.label, marginBottom: '8px' }}>{label}</div>}
+      <div style={{
+        background: 'rgba(0, 0, 0, 0.3)',
+        borderRadius: '10px',
+        padding: '14px',
+        border: `1px solid ${wrapped.border}`,
+        position: 'relative',
+        zIndex: 1,
+      }}>
+        {/* Canvas container with explicit positioning */}
+        <div style={{ 
+          position: 'relative', 
+          width: SIZE, 
+          height: SIZE, 
+          margin: '0 auto',
+          zIndex: 2,
+
+        }}>
+          <canvas
+            ref={canvasRef}
+            style={{
+              width: SIZE,
+              height: SIZE,
+              borderRadius: '8px',
+              cursor: draggingRef.current !== null ? 'grabbing' : hoverItem !== null ? 'grab' : 'crosshair',
+              display: 'block',
+            }}
+            onMouseDown={handleMouseDown}
+            onContextMenu={handleContextMenu}
+            onMouseLeave={handleMouseLeave}
+          />
+        </div>
+      </div>
+      
+      {/* UI Below the curve - separate container */}
+      <div style={{
+        marginTop: '10px',
+        background: 'rgba(0, 0, 0, 0.3)',
+        borderRadius: '10px',
+        padding: '12px',
+        border: `1px solid ${wrapped.border}`,
+      }}>
+        {/* Instructions */}
+        <div style={{
+          padding: '6px 10px',
+          background: 'rgba(249, 115, 22, 0.05)',
+          borderRadius: '6px',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '10px',
+          color: wrapped.textMuted,
+          textAlign: 'center',
+          border: `1px solid ${wrapped.border}`,
+          marginBottom: '10px',
+        }}>
+          <span style={{ color: wrapped.accent }}>drag</span> handles · <span style={{ color: wrapped.accent }}>double-click</span> add · <span style={{ color: wrapped.accent }}>right-click</span> delete
+        </div>
+        
+        {/* Preset buttons */}
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '6px',
+          justifyContent: 'center',
+        }}>
+          {presets.map((preset) => (
+            <button
+              key={preset.name}
+              onClick={() => {
+                const newPts = preset.points.map(p => ({ ...p, pos: [...p.pos], handleIn: p.handleIn ? [...p.handleIn] : undefined, handleOut: p.handleOut ? [...p.handleOut] : undefined }));
+                localDataRef.current = newPts;
+                onChange?.({ points: newPts });
+                draw();
+              }}
+              style={{
+                padding: '5px 10px',
+                background: 'rgba(249, 115, 22, 0.1)',
+                border: `1px solid ${wrapped.border}`,
+                borderRadius: '5px',
+                color: wrapped.textMuted,
+                cursor: 'pointer',
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: '10px',
+                transition: 'all 0.15s ease',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(249, 115, 22, 0.25)';
+                e.currentTarget.style.color = wrapped.accent;
+                e.currentTarget.style.borderColor = wrapped.accent;
+                e.currentTarget.style.boxShadow = '0 0 8px rgba(249, 115, 22, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(249, 115, 22, 0.1)';
+                e.currentTarget.style.color = wrapped.textMuted;
+                e.currentTarget.style.borderColor = wrapped.border;
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              {preset.name}
+            </button>
+          ))}
+        </div>
+        
+        {/* Points info */}
+        <div style={{
+          marginTop: '10px',
+          padding: '6px 10px',
+          background: wrapped.bgInput,
+          borderRadius: '6px',
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: '9px',
+          color: wrapped.textMuted,
+          border: `1px solid ${wrapped.border}`,
+          textAlign: 'center',
+        }}>
+          {points.length} point{points.length !== 1 ? 's' : ''} · handles control curve shape
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Main Debug Panel Component - minimal React state, only for UI
 // Circular loading spinner component
 const LoadingSpinner = () => (
@@ -1721,6 +2297,15 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               step={0.01}
             />
             <CheckboxInput label="Auto Start" value={values.autoStart} onChange={(v) => update("autoStart", v)} />
+          </Section>
+
+          {/* Easing Curve Test */}
+          <Section title="Easing Curve (Test)" defaultOpen={true}>
+            <EasingCurveEditor
+              label=""
+              value={values.easingCurve}
+              onChange={(v) => update("easingCurve", v)}
+            />
           </Section>
 
           {/* Size */}
