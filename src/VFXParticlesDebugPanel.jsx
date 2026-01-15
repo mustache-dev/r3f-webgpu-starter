@@ -168,18 +168,31 @@ const formatJSXValue = (key, value) => {
   
   // Objects
   if (typeof value === "object") {
+    const formatValue = (v, indent) => {
+      if (v === undefined || v === null) return "null";
+      if (typeof v === "string") return `"${v}"`;
+      if (typeof v === "number" || typeof v === "boolean") return String(v);
+      if (Array.isArray(v)) {
+        // Check if array of objects
+        if (v.length > 0 && typeof v[0] === "object" && !Array.isArray(v[0])) {
+          const items = v.map(item => formatValue(item, indent + 2));
+          return `[\n${items.map(i => " ".repeat(indent + 2) + i).join(",\n")}\n${" ".repeat(indent)}]`;
+        }
+        // Simple array
+        return `[${v.map(item => formatValue(item, indent)).join(", ")}]`;
+      }
+      if (typeof v === "object") {
+        return formatObject(v, indent + 2);
+      }
+      return String(v);
+    };
+    
     const formatObject = (obj, indent = 2) => {
       const entries = Object.entries(obj).filter(([, v]) => v !== undefined && v !== null);
       if (entries.length === 0) return "{}";
       
       const lines = entries.map(([k, v]) => {
-        if (typeof v === "object" && !Array.isArray(v)) {
-          return `${" ".repeat(indent)}${k}: ${formatObject(v, indent + 2)}`;
-        }
-        if (typeof v === "string") {
-          return `${" ".repeat(indent)}${k}: "${v}"`;
-        }
-        return `${" ".repeat(indent)}${k}: ${v}`;
+        return `${" ".repeat(indent)}${k}: ${formatValue(v, indent)}`;
       });
       return `{\n${lines.join(",\n")}\n${" ".repeat(indent - 2)}}`;
     };
@@ -239,10 +252,10 @@ const generateVFXParticlesJSX = (values) => {
   // Define prop order for clean output
   const propOrder = [
     "maxParticles", "position", "autoStart", "emitCount", "delay", "intensity",
-    "size", "fadeSize", "colorStart", "colorEnd", "fadeOpacity",
-    "gravity", "speed", "lifetime", "friction",
+    "size", "fadeSize", "fadeSizeCurve", "colorStart", "colorEnd", "fadeOpacity", "fadeOpacityCurve",
+    "gravity", "speed", "lifetime", "friction", "velocityCurve",
     "direction", "startPosition",
-    "rotation", "rotationSpeed", "orientToDirection",
+    "rotation", "rotationSpeed", "orientToDirection", "orientAxis", "stretchBySpeed",
     "appearance", "blending", "lighting", "shadow",
     "emitterShape", "emitterRadius", "emitterAngle", "emitterHeight", "emitterDirection", "emitterSurfaceOnly",
     "turbulence", "collision", "softParticles", "softDistance", "attractToCenter"
@@ -268,12 +281,20 @@ const generateVFXParticlesJSX = (values) => {
     if (key === "intensity" && value === 1) continue;
     if (key === "shadow" && value === false) continue;
     if (key === "orientToDirection" && value === false) continue;
+    // Skip orientAxis if default "z" OR if neither orientToDirection nor stretchBySpeed is active
+    if (key === "orientAxis") {
+      const axisNeeded = values.orientToDirection || values.stretchBySpeed;
+      if (!axisNeeded || value === "z" || value === "+z") continue;
+    }
     if (key === "softParticles" && value === false) continue;
     if (key === "attractToCenter" && value === false) continue;
     if (key === "emitterSurfaceOnly" && value === false) continue;
     
     // Skip softDistance if softParticles is false
     if (key === "softDistance" && !values.softParticles) continue;
+    
+    // Skip friction if velocityCurve is active (they're mutually exclusive)
+    if (key === "friction" && values.velocityCurve) continue;
     
     const formatted = formatJSXValue(key, value);
     if (formatted) props.push(formatted);
@@ -947,6 +968,7 @@ const RangeInput = ({ label, value, onChange, min = -100, max = 100, step = 0.01
         {label}
       </label>
       <div style={styles.rangeRow}>
+        <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', marginRight: '4px' }}>min</span>
         <ScrubInput
           value={minVal}
           onChange={(v) => onChange([v, maxVal])}
@@ -956,7 +978,19 @@ const RangeInput = ({ label, value, onChange, min = -100, max = 100, step = 0.01
           style={styles.rangeInput}
           placeholder="min"
         />
-        <span style={styles.rangeSeparator}>→</span>
+        <span 
+          style={{ 
+            ...styles.rangeSeparator, 
+            cursor: 'pointer',
+            padding: '2px 4px',
+            borderRadius: '3px',
+            transition: 'background 0.15s',
+          }}
+          onClick={() => onChange([minVal, minVal])}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          title="Click to set max = min"
+        >→</span>
         <ScrubInput
           value={maxVal}
           onChange={(v) => onChange([minVal, v])}
@@ -966,6 +1000,7 @@ const RangeInput = ({ label, value, onChange, min = -100, max = 100, step = 0.01
           style={styles.rangeInput}
           placeholder="max"
         />
+        <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.4)', marginLeft: '4px' }}>max</span>
       </div>
     </div>
   );
@@ -1467,7 +1502,9 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
   const [hoverItem, setHoverItem] = useState(null); // { type, index }
   const [selectedPoint, setSelectedPoint] = useState(null); // index of selected point
   const [isScaling, setIsScaling] = useState(false);
-  const scaleStartRef = useRef(null); // { mouseX, handleInLen, handleOutLen }
+  const scaleStartRef = useRef(null); // { mouseX, handleIn, handleOut }
+  const [isRotating, setIsRotating] = useState(false);
+  const rotateStartRef = useRef(null); // { mouseX, handleIn, handleOut }
   
   // Logical size (CSS pixels)
   const SIZE = 260;
@@ -1607,16 +1644,22 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         const isDraggingHandle = draggingRef.current?.type === 'handleOut' && draggingRef.current?.index === idx;
         const isHoveringHandle = hoverItem?.type === 'handleOut' && hoverItem?.index === idx;
         
-        // Handle line - highlight if selected
-        ctx.strokeStyle = isSelected ? 'rgba(100, 200, 255, 0.7)' : 'rgba(249, 115, 22, 0.5)';
+        // Handle line - highlight if selected (purple if rotating, cyan if scaling/selected)
+        const handleLineColor = isSelected 
+          ? (isRotating ? 'rgba(200, 100, 255, 0.7)' : 'rgba(100, 200, 255, 0.7)')
+          : 'rgba(249, 115, 22, 0.5)';
+        ctx.strokeStyle = handleLineColor;
         ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.beginPath();
         ctx.moveTo(pos.x, pos.y);
         ctx.lineTo(handlePos.x, handlePos.y);
         ctx.stroke();
         
-        // Handle point - cyan if selected
-        ctx.fillStyle = isDraggingHandle ? '#fff' : isSelected ? '#64c8ff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        // Handle point - purple if rotating, cyan if scaling/selected
+        const handlePointColor = isSelected 
+          ? (isRotating ? '#c864ff' : '#64c8ff')
+          : (isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)');
+        ctx.fillStyle = isDraggingHandle ? '#fff' : handlePointColor;
         ctx.beginPath();
         ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : isSelected ? 6 : 5, 0, Math.PI * 2);
         ctx.fill();
@@ -1634,16 +1677,22 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         const isDraggingHandle = draggingRef.current?.type === 'handleIn' && draggingRef.current?.index === idx;
         const isHoveringHandle = hoverItem?.type === 'handleIn' && hoverItem?.index === idx;
         
-        // Handle line - highlight if selected
-        ctx.strokeStyle = isSelected ? 'rgba(100, 200, 255, 0.7)' : 'rgba(249, 115, 22, 0.5)';
+        // Handle line - highlight if selected (purple if rotating, cyan if scaling/selected)
+        const handleLineColorIn = isSelected 
+          ? (isRotating ? 'rgba(200, 100, 255, 0.7)' : 'rgba(100, 200, 255, 0.7)')
+          : 'rgba(249, 115, 22, 0.5)';
+        ctx.strokeStyle = handleLineColorIn;
         ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.beginPath();
         ctx.moveTo(pos.x, pos.y);
         ctx.lineTo(handlePos.x, handlePos.y);
         ctx.stroke();
         
-        // Handle point - cyan if selected
-        ctx.fillStyle = isDraggingHandle ? '#fff' : isSelected ? '#64c8ff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        // Handle point - purple if rotating, cyan if scaling/selected
+        const handlePointColorIn = isSelected 
+          ? (isRotating ? '#c864ff' : '#64c8ff')
+          : (isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)');
+        ctx.fillStyle = isDraggingHandle ? '#fff' : handlePointColorIn;
         ctx.beginPath();
         ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : isSelected ? 6 : 5, 0, Math.PI * 2);
         ctx.fill();
@@ -1652,9 +1701,12 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         ctx.stroke();
       }
       
-      // Main point - cyan ring if selected
-      ctx.fillStyle = isDraggingPoint ? '#fff' : isSelected ? '#64c8ff' : isHoveringPoint ? wrapped.accentLight : wrapped.accent;
-      ctx.shadowColor = isSelected ? '#64c8ff' : wrapped.accent;
+      // Main point - purple if rotating, cyan if scaling/selected
+      const pointColor = isSelected 
+        ? (isRotating ? '#c864ff' : '#64c8ff')
+        : (isHoveringPoint ? wrapped.accentLight : wrapped.accent);
+      ctx.fillStyle = isDraggingPoint ? '#fff' : pointColor;
+      ctx.shadowColor = isSelected ? (isRotating ? '#c864ff' : '#64c8ff') : wrapped.accent;
       ctx.shadowBlur = isDraggingPoint ? 15 : isSelected ? 12 : 8;
       ctx.beginPath();
       ctx.arc(pos.x, pos.y, isDraggingPoint ? 10 : isSelected ? 9 : 8, 0, Math.PI * 2);
@@ -1687,7 +1739,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     ctx.fillText('value →', 0, 0);
     ctx.restore();
     
-  }, [toCanvas, hoverItem, GRAPH_SIZE, selectedPoint, isScaling]);
+  }, [toCanvas, hoverItem, GRAPH_SIZE, selectedPoint, isScaling, isRotating]);
   
   // Draw on mount and updates
   useEffect(() => {
@@ -1781,6 +1833,42 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         return;
       }
       
+      // Handle rotating mode
+      if (isRotating && selectedPoint !== null && rotateStartRef.current) {
+        const deltaX = e.clientX - rotateStartRef.current.mouseX;
+        const rotationAngle = deltaX * 0.02; // 50px = 1 radian
+        
+        const pts = localDataRef.current.map(p => ({ ...p }));
+        const pt = pts[selectedPoint];
+        
+        // Rotate handleIn
+        if (pt.handleIn && rotateStartRef.current.handleIn) {
+          const origAngle = rotateStartRef.current.handleInAngle;
+          const origLen = rotateStartRef.current.handleInLen;
+          const newAngle = origAngle + rotationAngle;
+          pt.handleIn = [
+            Math.cos(newAngle) * origLen,
+            Math.sin(newAngle) * origLen
+          ];
+        }
+        
+        // Rotate handleOut
+        if (pt.handleOut && rotateStartRef.current.handleOut) {
+          const origAngle = rotateStartRef.current.handleOutAngle;
+          const origLen = rotateStartRef.current.handleOutLen;
+          const newAngle = origAngle + rotationAngle;
+          pt.handleOut = [
+            Math.cos(newAngle) * origLen,
+            Math.sin(newAngle) * origLen
+          ];
+        }
+        
+        pts[selectedPoint] = pt;
+        localDataRef.current = pts;
+        draw();
+        return;
+      }
+      
       if (draggingRef.current !== null) {
         const { x, y } = fromCanvas(mx, my);
         const pts = localDataRef.current.map(p => ({ ...p }));
@@ -1835,6 +1923,15 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         draw();
         return;
       }
+      if (isRotating) {
+        // Confirm rotation
+        onChange?.({ points: localDataRef.current });
+        setIsRotating(false);
+        rotateStartRef.current = null;
+        document.body.style.cursor = '';
+        draw();
+        return;
+      }
       
       if (draggingRef.current !== null) {
         onChange?.({ points: localDataRef.current });
@@ -1846,9 +1943,14 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     
     // Keyboard handlers for scale mode
     const handleKeyDown = (e) => {
+      // Ignore keyboard shortcuts when typing in input fields
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') {
+        return;
+      }
+      
       // 'S' to start scaling selected point's handles
       if (e.key === 's' || e.key === 'S') {
-        if (selectedPoint !== null && !isScaling) {
+        if (selectedPoint !== null && !isScaling && !isRotating) {
           const pt = localDataRef.current[selectedPoint];
           scaleStartRef.current = {
             mouseX: 0, // Will be set on first mouse move
@@ -1870,7 +1972,31 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         }
       }
       
-      // Escape to cancel scaling or deselect
+      // 'R' to start rotating selected point's handles
+      if (e.key === 'r' || e.key === 'R') {
+        if (selectedPoint !== null && !isScaling && !isRotating) {
+          const pt = localDataRef.current[selectedPoint];
+          rotateStartRef.current = {
+            mouseX: 0, // Will be set on first mouse move
+            handleIn: pt.handleIn ? [...pt.handleIn] : null,
+            handleOut: pt.handleOut ? [...pt.handleOut] : null,
+            handleInLen: pt.handleIn ? Math.hypot(pt.handleIn[0], pt.handleIn[1]) : 0,
+            handleOutLen: pt.handleOut ? Math.hypot(pt.handleOut[0], pt.handleOut[1]) : 0,
+            handleInAngle: pt.handleIn ? Math.atan2(pt.handleIn[1], pt.handleIn[0]) : 0,
+            handleOutAngle: pt.handleOut ? Math.atan2(pt.handleOut[1], pt.handleOut[0]) : 0,
+          };
+          // Get current mouse position
+          const getMouseX = (ev) => {
+            rotateStartRef.current.mouseX = ev.clientX;
+            document.removeEventListener('mousemove', getMouseX);
+          };
+          document.addEventListener('mousemove', getMouseX);
+          setIsRotating(true);
+          document.body.style.cursor = 'grab';
+        }
+      }
+      
+      // Escape to cancel scaling/rotating or deselect
       if (e.key === 'Escape') {
         if (isScaling && scaleStartRef.current) {
           // Restore original handles
@@ -1888,6 +2014,22 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
           scaleStartRef.current = null;
           document.body.style.cursor = '';
           draw();
+        } else if (isRotating && rotateStartRef.current) {
+          // Restore original handles
+          const pts = localDataRef.current.map(p => ({ ...p }));
+          if (selectedPoint !== null) {
+            if (rotateStartRef.current.handleIn) {
+              pts[selectedPoint].handleIn = rotateStartRef.current.handleIn;
+            }
+            if (rotateStartRef.current.handleOut) {
+              pts[selectedPoint].handleOut = rotateStartRef.current.handleOut;
+            }
+            localDataRef.current = pts;
+          }
+          setIsRotating(false);
+          rotateStartRef.current = null;
+          document.body.style.cursor = '';
+          draw();
         } else {
           setSelectedPoint(null);
         }
@@ -1903,10 +2045,13 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [draw, fromCanvas, onChange, hitTest, hoverItem, selectedPoint, isScaling]);
+  }, [draw, fromCanvas, onChange, hitTest, hoverItem, selectedPoint, isScaling, isRotating]);
   
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
+    // Focus the canvas so keyboard shortcuts work
+    canvasRef.current?.focus();
+    
     const rect = canvasRef.current.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
@@ -1916,6 +2061,14 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       onChange?.({ points: localDataRef.current });
       setIsScaling(false);
       scaleStartRef.current = null;
+      document.body.style.cursor = '';
+      return;
+    }
+    // Cancel rotating mode on click
+    if (isRotating) {
+      onChange?.({ points: localDataRef.current });
+      setIsRotating(false);
+      rotateStartRef.current = null;
       document.body.style.cursor = '';
       return;
     }
@@ -1964,7 +2117,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draw, fromCanvas, onChange, hitTest, isScaling]);
+  }, [draw, fromCanvas, onChange, hitTest, isScaling, isRotating]);
   
   const handleContextMenu = useCallback((e) => {
     e.preventDefault();
@@ -2076,46 +2229,137 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     return points;
   }, []);
   
-  const generateElastic = useCallback((intensity, frequency) => {
-    const points = [{ pos: [0, 0], handleOut: [0.12, 0.6 * intensity] }];
+  // Generate elastic easing with direction: 'in', 'out', or 'inOut'
+  const generateElastic = useCallback((intensity, frequency, direction = 'out') => {
     const oscillations = Math.max(1, Math.round(frequency));
-    const segmentWidth = 0.8 / (oscillations * 2);
-    let t = 0.25;
+    const segmentWidth = 0.6 / (oscillations * 2);
     
-    for (let i = 0; i < oscillations; i++) {
-      const decay = Math.pow(0.5, i) * intensity;
-      const overshoot = 1 + decay * 0.2;
-      const undershoot = 1 - decay * 0.15;
+    if (direction === 'in') {
+      // Elastic In - oscillates around 0 at the start, then shoots to 1
+      const points = [{ pos: [0, 0], handleOut: [0.05, 0] }];
+      let t = 0.1;
       
-      // Overshoot
-      points.push({
-        pos: [t, overshoot],
-        handleIn: [-segmentWidth * 0.4, decay * 0.1],
-        handleOut: [segmentWidth * 0.4, -decay * 0.1]
-      });
-      t += segmentWidth;
-      
-      // Undershoot (except last)
-      if (i < oscillations - 1) {
+      for (let i = oscillations - 1; i >= 0; i--) {
+        const decay = Math.pow(0.5, i) * intensity;
+        const undershoot = -decay * 0.2;
+        const overshoot = decay * 0.15;
+        
+        // Undershoot (negative)
         points.push({
           pos: [t, undershoot],
           handleIn: [-segmentWidth * 0.4, -decay * 0.05],
           handleOut: [segmentWidth * 0.4, decay * 0.05]
         });
         t += segmentWidth;
+        
+        // Overshoot (positive, small)
+        if (i > 0) {
+          points.push({
+            pos: [t, overshoot],
+            handleIn: [-segmentWidth * 0.4, decay * 0.03],
+            handleOut: [segmentWidth * 0.4, -decay * 0.03]
+          });
+          t += segmentWidth;
+        }
       }
+      points.push({ pos: [1, 1], handleIn: [-0.15, -0.5 * intensity] });
+      return points;
+    } else if (direction === 'inOut') {
+      // Elastic In-Out - oscillates at both ends
+      const points = [{ pos: [0, 0], handleOut: [0.03, 0] }];
+      const halfOsc = Math.max(1, Math.ceil(oscillations / 2));
+      const segW = 0.25 / halfOsc;
+      let t = 0.05;
+      
+      // In phase - small oscillations around 0
+      for (let i = halfOsc - 1; i >= 0; i--) {
+        const decay = Math.pow(0.6, i) * intensity * 0.5;
+        points.push({
+          pos: [t, -decay * 0.15],
+          handleIn: [-segW * 0.3, 0],
+          handleOut: [segW * 0.3, 0]
+        });
+        t += segW;
+      }
+      
+      // Middle - smooth transition
+      points.push({ pos: [0.5, 0.5], handleIn: [-0.1, -0.3], handleOut: [0.1, 0.3] });
+      t = 0.75;
+      
+      // Out phase - oscillations around 1
+      for (let i = 0; i < halfOsc; i++) {
+        const decay = Math.pow(0.6, i) * intensity * 0.5;
+        points.push({
+          pos: [t, 1 + decay * 0.15],
+          handleIn: [-segW * 0.3, 0],
+          handleOut: [segW * 0.3, 0]
+        });
+        t += segW;
+      }
+      
+      points.push({ pos: [1, 1], handleIn: [-0.05, 0] });
+      return points;
+    } else {
+      // Elastic Out (default) - shoots to 1, then oscillates around it
+      const points = [{ pos: [0, 0], handleOut: [0.12, 0.6 * intensity] }];
+      let t = 0.25;
+      
+      for (let i = 0; i < oscillations; i++) {
+        const decay = Math.pow(0.5, i) * intensity;
+        const overshoot = 1 + decay * 0.2;
+        const undershoot = 1 - decay * 0.15;
+        
+        // Overshoot
+        points.push({
+          pos: [t, overshoot],
+          handleIn: [-segmentWidth * 0.4, decay * 0.1],
+          handleOut: [segmentWidth * 0.4, -decay * 0.1]
+        });
+        t += segmentWidth;
+        
+        // Undershoot (except last)
+        if (i < oscillations - 1) {
+          points.push({
+            pos: [t, undershoot],
+            handleIn: [-segmentWidth * 0.4, -decay * 0.05],
+            handleOut: [segmentWidth * 0.4, decay * 0.05]
+          });
+          t += segmentWidth;
+        }
+      }
+      points.push({ pos: [1, 1], handleIn: [-0.1, 0] });
+      return points;
     }
-    points.push({ pos: [1, 1], handleIn: [-0.1, 0] });
-    return points;
   }, []);
   
-  const generateBack = useCallback((intensity) => {
-    const overshoot = 1 + intensity * 0.15;
-    return [
-      { pos: [0, 0], handleOut: [0.2, 0.6 * intensity] },
-      { pos: [0.55, overshoot], handleIn: [-0.12, 0.1 * intensity], handleOut: [0.12, -0.05 * intensity] },
-      { pos: [1, 1], handleIn: [-0.2, 0] }
-    ];
+  // Generate back easing with direction: 'in', 'out', or 'inOut'
+  const generateBack = useCallback((intensity, direction = 'out') => {
+    const overshoot = intensity * 0.15;
+    
+    if (direction === 'in') {
+      // Back In - goes negative first, then shoots to 1
+      return [
+        { pos: [0, 0], handleOut: [0.2, 0] },
+        { pos: [0.4, -overshoot], handleIn: [-0.1, 0], handleOut: [0.1, 0] },
+        { pos: [1, 1], handleIn: [-0.25, -0.5 * intensity] }
+      ];
+    } else if (direction === 'inOut') {
+      // Back In-Out - negative start and overshoot end
+      return [
+        { pos: [0, 0], handleOut: [0.15, 0] },
+        { pos: [0.2, -overshoot * 0.5], handleIn: [-0.08, 0], handleOut: [0.08, 0] },
+        { pos: [0.5, 0.5], handleIn: [-0.12, -0.25], handleOut: [0.12, 0.25] },
+        { pos: [0.8, 1 + overshoot * 0.5], handleIn: [-0.08, 0], handleOut: [0.08, 0] },
+        { pos: [1, 1], handleIn: [-0.15, 0] }
+      ];
+    } else {
+      // Back Out (default) - overshoots 1, then settles
+      return [
+        { pos: [0, 0], handleOut: [0.2, 0.6 * intensity] },
+        { pos: [0.55, 1 + overshoot], handleIn: [-0.12, 0.1 * intensity], handleOut: [0.12, -0.05 * intensity] },
+        { pos: [1, 1], handleIn: [-0.2, 0] }
+      ];
+    }
   }, []);
   
   return (
@@ -2140,12 +2384,14 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         }}>
           <canvas
             ref={canvasRef}
+            tabIndex={0}
             style={{
               width: SIZE,
               height: SIZE,
               borderRadius: '8px',
-              cursor: isScaling ? 'ew-resize' : draggingRef.current !== null ? 'grabbing' : hoverItem !== null ? 'grab' : 'crosshair',
+              cursor: isScaling ? 'ew-resize' : isRotating ? 'grab' : draggingRef.current !== null ? 'grabbing' : hoverItem !== null ? 'grab' : 'crosshair',
               display: 'block',
+              outline: 'none', // Prevent focus outline
             }}
             onMouseDown={handleMouseDown}
             onContextMenu={handleContextMenu}
@@ -2179,8 +2425,25 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
           </div>
         )}
         
+        {/* Rotating mode indicator */}
+        {isRotating && (
+          <div style={{
+            padding: '8px 12px',
+            background: 'rgba(200, 100, 255, 0.15)',
+            borderRadius: '6px',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '11px',
+            color: '#c864ff',
+            textAlign: 'center',
+            border: '1px solid rgba(200, 100, 255, 0.4)',
+            marginBottom: '10px',
+          }}>
+            ↻ <strong>ROTATING</strong> · move mouse left/right · click to confirm · <span style={{ opacity: 0.7 }}>Esc</span> to cancel
+          </div>
+        )}
+        
         {/* Selection info */}
-        {selectedPoint !== null && !isScaling && (
+        {selectedPoint !== null && !isScaling && !isRotating && (
           <div style={{
             padding: '6px 10px',
             background: 'rgba(100, 200, 255, 0.08)',
@@ -2192,7 +2455,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
             border: '1px solid rgba(100, 200, 255, 0.25)',
             marginBottom: '10px',
           }}>
-            Point {selectedPoint + 1} selected · press <strong>S</strong> to scale handles
+            Point {selectedPoint + 1} selected · <strong>S</strong> scale · <strong>R</strong> rotate
           </div>
         )}
         
@@ -2208,7 +2471,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
           border: `1px solid ${wrapped.border}`,
           marginBottom: '10px',
         }}>
-          <span style={{ color: wrapped.accent }}>click</span> select · <span style={{ color: '#64c8ff' }}>S</span> scale handles · <span style={{ color: wrapped.accent }}>double-click</span> add · <span style={{ color: wrapped.accent }}>right-click</span> delete
+          <span style={{ color: wrapped.accent }}>click</span> select · <span style={{ color: '#64c8ff' }}>S</span> scale · <span style={{ color: '#c864ff' }}>R</span> rotate · <span style={{ color: wrapped.accent }}>double-click</span> add · <span style={{ color: wrapped.accent }}>right-click</span> delete
         </div>
         
         {/* Preset buttons */}
@@ -2373,25 +2636,21 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
           {/* Generate buttons */}
           <div style={{
             display: 'flex',
+            flexDirection: 'column',
             gap: '6px',
-            justifyContent: 'center',
           }}>
-            {[
-              { name: 'bounce', gen: () => generateBounce(easingIntensity, easingFrequency) },
-              { name: 'elastic', gen: () => generateElastic(easingIntensity, easingFrequency) },
-              { name: 'back', gen: () => generateBack(easingIntensity) },
-            ].map(({ name, gen }) => (
+            {/* Bounce - single button */}
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
               <button
-                key={name}
                 onClick={() => {
-                  const pts = gen();
+                  const pts = generateBounce(easingIntensity, easingFrequency);
                   localDataRef.current = pts;
                   onChange?.({ points: pts });
                   setSelectedPoint(null);
                   draw();
                 }}
                 style={{
-                  padding: '5px 10px',
+                  padding: '5px 14px',
                   background: 'rgba(168, 85, 247, 0.15)',
                   border: '1px solid rgba(168, 85, 247, 0.3)',
                   borderRadius: '5px',
@@ -2412,9 +2671,95 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
                   e.currentTarget.style.boxShadow = 'none';
                 }}
               >
-                {name}
+                bounce
               </button>
-            ))}
+            </div>
+            
+            {/* Elastic variants */}
+            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+              {[
+                { name: 'elastic in', dir: 'in' },
+                { name: 'elastic out', dir: 'out' },
+                { name: 'elastic in-out', dir: 'inOut' },
+              ].map(({ name, dir }) => (
+                <button
+                  key={name}
+                  onClick={() => {
+                    const pts = generateElastic(easingIntensity, easingFrequency, dir);
+                    localDataRef.current = pts;
+                    onChange?.({ points: pts });
+                    setSelectedPoint(null);
+                    draw();
+                  }}
+                  style={{
+                    padding: '5px 8px',
+                    background: 'rgba(168, 85, 247, 0.15)',
+                    border: '1px solid rgba(168, 85, 247, 0.3)',
+                    borderRadius: '5px',
+                    color: '#a855f7',
+                    cursor: 'pointer',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '9px',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(168, 85, 247, 0.3)';
+                    e.currentTarget.style.borderColor = '#a855f7';
+                    e.currentTarget.style.boxShadow = '0 0 8px rgba(168, 85, 247, 0.4)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(168, 85, 247, 0.15)';
+                    e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.3)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+            
+            {/* Back variants */}
+            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
+              {[
+                { name: 'back in', dir: 'in' },
+                { name: 'back out', dir: 'out' },
+                { name: 'back in-out', dir: 'inOut' },
+              ].map(({ name, dir }) => (
+                <button
+                  key={name}
+                  onClick={() => {
+                    const pts = generateBack(easingIntensity, dir);
+                    localDataRef.current = pts;
+                    onChange?.({ points: pts });
+                    setSelectedPoint(null);
+                    draw();
+                  }}
+                  style={{
+                    padding: '5px 8px',
+                    background: 'rgba(168, 85, 247, 0.15)',
+                    border: '1px solid rgba(168, 85, 247, 0.3)',
+                    borderRadius: '5px',
+                    color: '#a855f7',
+                    cursor: 'pointer',
+                    fontFamily: "'JetBrains Mono', monospace",
+                    fontSize: '9px',
+                    transition: 'all 0.15s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(168, 85, 247, 0.3)';
+                    e.currentTarget.style.borderColor = '#a855f7';
+                    e.currentTarget.style.boxShadow = '0 0 8px rgba(168, 85, 247, 0.4)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(168, 85, 247, 0.15)';
+                    e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.3)';
+                    e.currentTarget.style.boxShadow = 'none';
+                  }}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         
@@ -2472,20 +2817,52 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
   const [copySuccess, setCopySuccess] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const valuesRef = useRef(initialValues);
+  const dirtyKeysRef = useRef(new Set()); // Track which keys have changed since last flush
   const [, forceUpdate] = useState(0);
   const isResizing = useRef(false);
   const resizeType = useRef(null);
   const debounceTimerRef = useRef(null);
   const DEBOUNCE_DELAY = 500; // 0.5s
+  
+  // Track previous initialValues to detect external updates
+  const prevInitialValuesRef = useRef(initialValues);
+  
+  // When initialValues changes from parent (e.g., after state changes), 
+  // merge new values but preserve dirty (unsaved) changes
+  useEffect(() => {
+    if (initialValues !== prevInitialValuesRef.current) {
+      // Merge new initialValues into valuesRef, but preserve dirty keys
+      const merged = { ...valuesRef.current };
+      for (const key in initialValues) {
+        // Only update keys that aren't dirty (user hasn't changed them yet)
+        if (!dirtyKeysRef.current.has(key)) {
+          merged[key] = initialValues[key];
+        }
+      }
+      valuesRef.current = merged;
+      prevInitialValuesRef.current = initialValues;
+      forceUpdate(n => n + 1);
+    }
+  }, [initialValues]);
 
-  // Flush pending changes to parent
+  // Flush pending changes to parent - only send dirty keys
   const flushChanges = useCallback(() => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
     setHasPendingChanges(false);
-    onUpdate(valuesRef.current);
+    
+    // Only send the keys that actually changed
+    const changedValues = {};
+    for (const key of dirtyKeysRef.current) {
+      changedValues[key] = valuesRef.current[key];
+    }
+    dirtyKeysRef.current.clear();
+    
+    if (Object.keys(changedValues).length > 0) {
+      onUpdate(changedValues);
+    }
   }, [onUpdate]);
 
   // Schedule a debounced update
@@ -2526,18 +2903,22 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
 
   const update = useCallback((key, value) => {
     valuesRef.current = { ...valuesRef.current, [key]: value };
+    dirtyKeysRef.current.add(key);
     scheduleUpdate();
     forceUpdate(n => n + 1);
   }, [scheduleUpdate]);
 
   const updateNested = useCallback((parentKey, childKey, value) => {
+    // Get the existing parent object, defaulting to empty object if null/undefined
+    const existingParent = valuesRef.current[parentKey] || {};
     valuesRef.current = {
       ...valuesRef.current,
       [parentKey]: {
-        ...valuesRef.current[parentKey],
+        ...existingParent,
         [childKey]: value,
       },
     };
+    dirtyKeysRef.current.add(parentKey);
     scheduleUpdate();
     forceUpdate(n => n + 1);
   }, [scheduleUpdate]);
@@ -2552,6 +2933,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
       ...valuesRef.current,
       geometryArgs: newArgs,
     };
+    dirtyKeysRef.current.add('geometryArgs');
     scheduleUpdate();
     forceUpdate(n => n + 1);
   }, [scheduleUpdate]);
@@ -2714,7 +3096,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
           </Section>
 
           {/* Easing Curve Test */}
-          <Section title="Easing Curve (Test)" defaultOpen={true}>
+          <Section title="Easing Curve (Test)" defaultOpen={false}>
             <EasingCurveEditor
               label=""
               value={values.easingCurve}
@@ -2738,6 +3120,27 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               min={0}
               max={5}
             />
+            <div style={styles.row}>
+              <label style={styles.label}>Use Curve</label>
+              <input
+                type="checkbox"
+                checked={!!values.fadeSizeCurve}
+                onChange={(e) => update("fadeSizeCurve", e.target.checked ? {
+                  points: [
+                    { pos: [0, 0], handleOut: [0.33, 0.33] },
+                    { pos: [1, 1], handleIn: [-0.33, -0.33] }
+                  ]
+                } : null)}
+                style={{ accentColor: wrapped.accent }}
+              />
+            </div>
+            {values.fadeSizeCurve && (
+              <EasingCurveEditor
+                label=""
+                value={values.fadeSizeCurve}
+                onChange={(v) => update("fadeSizeCurve", v)}
+              />
+            )}
           </Section>
 
           {/* Colors */}
@@ -2770,6 +3173,27 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               min={0}
               max={1}
             />
+            <div style={styles.row}>
+              <label style={styles.label}>Use Opacity Curve</label>
+              <input
+                type="checkbox"
+                checked={!!values.fadeOpacityCurve}
+                onChange={(e) => update("fadeOpacityCurve", e.target.checked ? {
+                  points: [
+                    { pos: [0, 0], handleOut: [0.33, 0.33] },
+                    { pos: [1, 1], handleIn: [-0.33, -0.33] }
+                  ]
+                } : null)}
+                style={{ accentColor: wrapped.accent }}
+              />
+            </div>
+            {values.fadeOpacityCurve && (
+              <EasingCurveEditor
+                label=""
+                value={values.fadeOpacityCurve}
+                onChange={(v) => update("fadeOpacityCurve", v)}
+              />
+            )}
             <NumberInput
               label="Intensity"
               value={values.intensity || 1}
@@ -2797,19 +3221,43 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               min={0.1}
               max={60}
             />
-            <RangeInput
-              label="Friction Intensity"
-              value={values.friction?.intensity}
-              onChange={(v) => updateNested("friction", "intensity", v)}
-              min={-1}
-              max={1}
-            />
-            <SelectInput
-              label="Friction Easing"
-              value={values.friction?.easing || "linear"}
-              onChange={(v) => updateNested("friction", "easing", v)}
-              options={{ Linear: "linear", "Ease In": "easeIn", "Ease Out": "easeOut", "Ease In-Out": "easeInOut" }}
-            />
+            <div style={styles.row}>
+              <label style={styles.label}>Use Velocity Curve</label>
+              <input
+                type="checkbox"
+                checked={!!values.velocityCurve}
+                onChange={(e) => update("velocityCurve", e.target.checked ? {
+                  points: [
+                    { pos: [0, 1], handleOut: [0.33, 0] },
+                    { pos: [1, 1], handleIn: [-0.33, 0] }
+                  ]
+                } : null)}
+                style={{ accentColor: wrapped.accent }}
+              />
+            </div>
+            {values.velocityCurve ? (
+              <EasingCurveEditor
+                label="Velocity over Lifetime (1=full, 0=stopped)"
+                value={values.velocityCurve}
+                onChange={(v) => update("velocityCurve", v)}
+              />
+            ) : (
+              <>
+                <RangeInput
+                  label="Friction Intensity"
+                  value={values.friction?.intensity}
+                  onChange={(v) => updateNested("friction", "intensity", v)}
+                  min={-1}
+                  max={1}
+                />
+                <SelectInput
+                  label="Friction Easing"
+                  value={values.friction?.easing || "linear"}
+                  onChange={(v) => updateNested("friction", "easing", v)}
+                  options={{ Linear: "linear", "Ease In": "easeIn", "Ease Out": "easeOut", "Ease In-Out": "easeInOut" }}
+                />
+              </>
+            )}
           </Section>
 
           {/* Direction & Position */}
@@ -2835,6 +3283,50 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               value={values.orientToDirection}
               onChange={(v) => update("orientToDirection", v)}
             />
+            {(values.orientToDirection || values.stretchBySpeed) && (
+              <SelectInput
+                label="Orient/Stretch Axis"
+                value={values.orientAxis || "z"}
+                onChange={(v) => update("orientAxis", v)}
+                options={{
+                  "+X": "x",
+                  "+Y": "y",
+                  "+Z": "z",
+                  "-X": "-x",
+                  "-Y": "-y",
+                  "-Z": "-z",
+                }}
+              />
+            )}
+            <div style={styles.row}>
+              <label style={styles.label}>Stretch by Speed</label>
+              <input
+                type="checkbox"
+                checked={!!values.stretchBySpeed}
+                onChange={(e) => update("stretchBySpeed", e.target.checked ? { factor: 2, maxStretch: 5 } : null)}
+                style={{ accentColor: wrapped.accent }}
+              />
+            </div>
+            {values.stretchBySpeed && (
+              <>
+                <NumberInput
+                  label="Stretch Factor"
+                  value={values.stretchBySpeed?.factor || 2}
+                  onChange={(v) => update("stretchBySpeed", { ...values.stretchBySpeed, factor: v })}
+                  min={0}
+                  max={20}
+                  step={0.1}
+                />
+                <NumberInput
+                  label="Max Stretch"
+                  value={values.stretchBySpeed?.maxStretch || 5}
+                  onChange={(v) => update("stretchBySpeed", { ...values.stretchBySpeed, maxStretch: v })}
+                  min={1}
+                  max={20}
+                  step={0.5}
+                />
+              </>
+            )}
           </Section>
 
           {/* Geometry */}

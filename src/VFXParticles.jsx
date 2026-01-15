@@ -110,6 +110,148 @@ const easingToType = (easing) => {
   }
 };
 
+// Convert axis string to number: 0=+X, 1=+Y, 2=+Z, 3=-X, 4=-Y, 5=-Z
+const axisToNumber = (axis) => {
+  switch (axis) {
+    case 'x': case '+x': case 'X': case '+X': return 0;
+    case 'y': case '+y': case 'Y': case '+Y': return 1;
+    case 'z': case '+z': case 'Z': case '+Z': return 2;
+    case '-x': case '-X': return 3;
+    case '-y': case '-Y': return 4;
+    case '-z': case '-Z': return 5;
+    default: return 2; // default to +Z
+  }
+};
+
+// Curve baking utilities - bake spline curves to 1D textures for GPU sampling
+const CURVE_RESOLUTION = 256; // Number of samples in the baked curve
+
+// Evaluate cubic bezier between two points with handles
+const evaluateBezierSegment = (t, p0, p1, h0Out, h1In) => {
+  // p0 = start point [x, y], p1 = end point [x, y]
+  // h0Out = handle out from p0 (offset), h1In = handle in to p1 (offset)
+  const cp0 = p0;
+  const cp1 = [p0[0] + (h0Out?.[0] || 0), p0[1] + (h0Out?.[1] || 0)];
+  const cp2 = [p1[0] + (h1In?.[0] || 0), p1[1] + (h1In?.[1] || 0)];
+  const cp3 = p1;
+  
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const mt3 = mt2 * mt;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  
+  return [
+    mt3 * cp0[0] + 3 * mt2 * t * cp1[0] + 3 * mt * t2 * cp2[0] + t3 * cp3[0],
+    mt3 * cp0[1] + 3 * mt2 * t * cp1[1] + 3 * mt * t2 * cp2[1] + t3 * cp3[1],
+  ];
+};
+
+// Find Y value for a given X on the curve using binary search
+const sampleCurveAtX = (x, points) => {
+  if (!points || points.length < 2) return x; // Linear fallback
+  
+  // Validate points have required data
+  if (!points[0]?.pos || !points[points.length - 1]?.pos) return x;
+  
+  // Find the segment containing x
+  let segmentIdx = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    if (points[i]?.pos && points[i + 1]?.pos && 
+        x >= points[i].pos[0] && x <= points[i + 1].pos[0]) {
+      segmentIdx = i;
+      break;
+    }
+  }
+  
+  const p0 = points[segmentIdx];
+  const p1 = points[segmentIdx + 1];
+  
+  // Validate segment points
+  if (!p0?.pos || !p1?.pos) return x;
+  
+  // Binary search for t that gives us x
+  let tLow = 0, tHigh = 1, t = 0.5;
+  for (let iter = 0; iter < 20; iter++) {
+    const [px] = evaluateBezierSegment(t, p0.pos, p1.pos, p0.handleOut, p1.handleIn);
+    if (Math.abs(px - x) < 0.0001) break;
+    if (px < x) {
+      tLow = t;
+    } else {
+      tHigh = t;
+    }
+    t = (tLow + tHigh) / 2;
+  }
+  
+  const [, py] = evaluateBezierSegment(t, p0.pos, p1.pos, p0.handleOut, p1.handleIn);
+  // Allow values outside 0-1 for overshoot effects (elastic, bounce)
+  // Clamp to reasonable range to prevent extreme values
+  return Math.max(-0.5, Math.min(1.5, py));
+};
+
+// Bake a curve to a Float32Array for use in DataTexture
+export const bakeCurveToArray = (curveData, resolution = CURVE_RESOLUTION) => {
+  const data = new Float32Array(resolution);
+  
+  // Validate curve data structure
+  if (!curveData?.points || !Array.isArray(curveData.points) || curveData.points.length < 2) {
+    // Default linear curve
+    for (let i = 0; i < resolution; i++) {
+      data[i] = i / (resolution - 1);
+    }
+    return data;
+  }
+  
+  // Validate first and last points have pos arrays
+  const firstPoint = curveData.points[0];
+  const lastPoint = curveData.points[curveData.points.length - 1];
+  if (!firstPoint?.pos || !lastPoint?.pos || !Array.isArray(firstPoint.pos) || !Array.isArray(lastPoint.pos)) {
+    // Fallback to linear
+    for (let i = 0; i < resolution; i++) {
+      data[i] = i / (resolution - 1);
+    }
+    return data;
+  }
+  
+  for (let i = 0; i < resolution; i++) {
+    const x = i / (resolution - 1); // 0 to 1
+    data[i] = sampleCurveAtX(x, curveData.points);
+  }
+  
+  return data;
+};
+
+// Create a combined DataTexture from multiple curve data
+// R = size curve, G = opacity curve, B = velocity curve
+export const createCombinedCurveTexture = (sizeCurve, opacityCurve, velocityCurve) => {
+  const sizeData = bakeCurveToArray(sizeCurve);
+  const opacityData = bakeCurveToArray(opacityCurve);
+  const velocityData = bakeCurveToArray(velocityCurve);
+  
+  const rgba = new Float32Array(CURVE_RESOLUTION * 4);
+  for (let i = 0; i < CURVE_RESOLUTION; i++) {
+    rgba[i * 4] = sizeData[i];       // R - size easing
+    rgba[i * 4 + 1] = opacityData[i]; // G - opacity easing
+    rgba[i * 4 + 2] = velocityData[i]; // B - velocity easing
+    rgba[i * 4 + 3] = 1;              // A
+  }
+  
+  const tex = new THREE.DataTexture(rgba, CURVE_RESOLUTION, 1, THREE.RGBAFormat, THREE.FloatType);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  return tex;
+};
+
+// Default linear curve (no easing)
+const DEFAULT_LINEAR_CURVE = {
+  points: [
+    { pos: [0, 0], handleOut: [0.33, 0] },
+    { pos: [1, 1], handleIn: [-0.33, 0] }
+  ]
+};
+
 // Normalize rotation prop - supports:
 // - Single number: rotation={0.5} → same rotation for all
 // - [min, max]: rotation={[0, Math.PI]} → random in range (Y-axis for sprites, all axes for geometry)
@@ -140,7 +282,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
     colorStart = ["#ffffff"],
     colorEnd = null, // If null, uses colorStart (no color transition)
     fadeSize = [1, 0],
+    fadeSizeCurve = null, // Curve data { points: [...] } - controls fadeSize over lifetime (overrides fadeSize if set)
     fadeOpacity = [1, 0],
+    fadeOpacityCurve = null, // Curve data { points: [...] } - controls fadeOpacity over lifetime (overrides fadeOpacity if set)
+    velocityCurve = null, // Curve data { points: [...] } - controls velocity/speed over lifetime (overrides friction if set)
     gravity = [0, 0.001, 0],
     lifetime = [1, 2],
     direction = [[-1, 1], [0, 1], [-1, 1]], // [[minX, maxX], [minY, maxY], [minZ, maxZ]] or [min, max] for all axes
@@ -155,6 +300,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     rotationSpeed = [0, 0], // [min, max] rotation speed in radians/second
     geometry = null, // Custom geometry (e.g. new THREE.SphereGeometry(0.5, 8, 8))
     orientToDirection = false, // Rotate geometry to face velocity direction (geometry mode only)
+    orientAxis = "z", // Which local axis aligns with velocity: "x", "y", "z", "-x", "-y", "-z"
+    stretchBySpeed = null, // { factor: 2, maxStretch: 5 } - stretch particles in velocity direction based on effective speed
     lighting = Lighting.STANDARD, // 'basic' | 'standard' | 'physical' - material type for geometry mode
     shadow = false, // Enable both castShadow and receiveShadow on geometry instances
     blending = Blending.NORMAL,
@@ -212,6 +359,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const [activeOrientToDirection, setActiveOrientToDirection] = useState(orientToDirection);
   const [activeGeometry, setActiveGeometry] = useState(geometry);
   const [activeShadow, setActiveShadow] = useState(shadow);
+  const [activeFadeSizeCurve, setActiveFadeSizeCurve] = useState(fadeSizeCurve);
+  const [activeFadeOpacityCurve, setActiveFadeOpacityCurve] = useState(fadeOpacityCurve);
+  const [activeVelocityCurve, setActiveVelocityCurve] = useState(velocityCurve);
   
   // Keep refs in sync with props (when not in debug mode)
   useEffect(() => {
@@ -229,8 +379,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
       setActiveOrientToDirection(orientToDirection);
       setActiveGeometry(geometry);
       setActiveShadow(shadow);
+      setActiveFadeSizeCurve(fadeSizeCurve);
+      setActiveFadeOpacityCurve(fadeOpacityCurve);
+      setActiveVelocityCurve(velocityCurve);
     }
-  }, [debug, maxParticles, lighting, appearance, orientToDirection, geometry, shadow]);
+  }, [debug, maxParticles, lighting, appearance, orientToDirection, geometry, shadow, fadeSizeCurve, fadeOpacityCurve, velocityCurve]);
 
   // Convert lifetime in seconds to fade rate per second (framerate independent)
   const lifetimeToFadeRate = (seconds) => 1 / seconds;
@@ -240,6 +393,28 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const speedRange = useMemo(() => toRange(speed, [0.1, 0.1]), [speed]);
   const fadeSizeRange = useMemo(() => toRange(fadeSize, [1, 0]), [fadeSize]);
   const fadeOpacityRange = useMemo(() => toRange(fadeOpacity, [1, 0]), [fadeOpacity]);
+  
+  // Create combined curve texture for GPU sampling (use active curves for debug mode)
+  // R = size, G = opacity, B = velocity
+  const curveTexture = useMemo(() => {
+    return createCombinedCurveTexture(activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve);
+  }, [activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve]);
+  
+  // Dispose curve texture when it changes or component unmounts
+  const prevCurveTextureRef = useRef(null);
+  useEffect(() => {
+    // Dispose previous texture if it changed
+    if (prevCurveTextureRef.current && prevCurveTextureRef.current !== curveTexture) {
+      prevCurveTextureRef.current.dispose();
+    }
+    prevCurveTextureRef.current = curveTexture;
+    
+    return () => {
+      if (curveTexture) {
+        curveTexture.dispose();
+      }
+    };
+  }, [curveTexture]);
   const lifetimeRange = useMemo(() => toRange(lifetime, [1, 2]), [lifetime]);
   const rotation3D = useMemo(() => toRotation3D(rotation), [rotation]);
   const rotationSpeed3D = useMemo(() => toRotation3D(rotationSpeed), [rotationSpeed]);
@@ -389,6 +564,14 @@ export const VFXParticles = forwardRef(function VFXParticles(
       // Soft particles
       softParticlesEnabled: uniform(softParticles ? 1 : 0),
       softDistance: uniform(softDistance),
+      // Velocity curve (replaces friction when enabled)
+      velocityCurveEnabled: uniform(velocityCurve ? 1 : 0),
+      // Orient axis: 0=+X, 1=+Y, 2=+Z, 3=-X, 4=-Y, 5=-Z
+      orientAxisType: uniform(axisToNumber(orientAxis)),
+      // Stretch by speed (uses effective velocity after curve modifier)
+      stretchEnabled: uniform(stretchBySpeed ? 1 : 0),
+      stretchFactor: uniform(stretchBySpeed?.factor ?? 1),
+      stretchMax: uniform(stretchBySpeed?.maxStretch ?? 5),
       // Collision uniforms
       collisionEnabled: uniform(collision ? 1 : 0),
       collisionPlaneY: uniform(collision?.plane?.y ?? 0),
@@ -515,6 +698,17 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.softParticlesEnabled.value = softParticles ? 1 : 0;
     uniforms.softDistance.value = softDistance;
     
+    // Velocity curve (when enabled, overrides friction)
+    uniforms.velocityCurveEnabled.value = velocityCurve ? 1 : 0;
+    
+    // Orient axis
+    uniforms.orientAxisType.value = axisToNumber(orientAxis);
+    
+    // Stretch by speed
+    uniforms.stretchEnabled.value = stretchBySpeed ? 1 : 0;
+    uniforms.stretchFactor.value = stretchBySpeed?.factor ?? 1;
+    uniforms.stretchMax.value = stretchBySpeed?.maxStretch ?? 5;
+    
     // Collision
     uniforms.collisionEnabled.value = collision ? 1 : 0;
     uniforms.collisionPlaneY.value = collision?.plane?.y ?? 0;
@@ -527,7 +721,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     speedRange, lifetimeRange, direction3D, rotation3D, rotationSpeed3D,
     intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms, collision,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPosition3D, attractors, attractToCenter, softParticles, softDistance
+    turbulence, startPosition3D, attractors, attractToCenter, softParticles, softDistance, velocityCurve, orientAxis, stretchBySpeed
   ]);
 
   // GPU Storage arrays
@@ -830,41 +1024,42 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const gravityMultiplier = float(1).add(particleSize.mul(uniforms.sizeBasedGravity));
         velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001).mul(gravityMultiplier));
         
-        // Friction with curve support
+        // Velocity control: either via curve texture or friction
         // Calculate particle progress (0 at birth, 1 at death)
         const progress = float(1).sub(lifetime);
         
-        // Apply easing function based on frictionEasingType
-        // 0 = linear, 1 = easeIn, 2 = easeOut, 3 = easeInOut
-        const easingType = uniforms.frictionEasingType;
-        const easedProgress = easingType.lessThan(0.5).select(
-          // Linear: t
-          progress,
-          easingType.lessThan(1.5).select(
-            // EaseIn: t^2
-            progress.mul(progress),
-            easingType.lessThan(2.5).select(
-              // EaseOut: 1 - (1-t)^2
-              float(1).sub(float(1).sub(progress).mul(float(1).sub(progress))),
-              // EaseInOut: t < 0.5 ? 2t^2 : 1 - (-2t + 2)^2 / 2
-              progress.lessThan(0.5).select(
-                float(2).mul(progress).mul(progress),
-                float(1).sub(float(-2).mul(progress).add(2).pow(2).div(2))
+        // Sample velocity curve from B channel of combined texture (R=size, G=opacity, B=velocity)
+        // Velocity curve value: 1 = full speed, 0 = stopped
+        const velocityCurveSample = texture(curveTexture, vec2(progress, float(0.5))).z;
+        
+        // Choose between velocity curve (if enabled) or friction (legacy)
+        const speedScale = uniforms.velocityCurveEnabled.greaterThan(0.5).select(
+          // Use velocity curve directly as speed multiplier
+          velocityCurveSample,
+          // Legacy friction behavior
+          (() => {
+            // Apply easing function based on frictionEasingType
+            // 0 = linear, 1 = easeIn, 2 = easeOut, 3 = easeInOut
+            const easingType = uniforms.frictionEasingType;
+            const easedProgress = easingType.lessThan(0.5).select(
+              progress,
+              easingType.lessThan(1.5).select(
+                progress.mul(progress),
+                easingType.lessThan(2.5).select(
+                  float(1).sub(float(1).sub(progress).mul(float(1).sub(progress))),
+                  progress.lessThan(0.5).select(
+                    float(2).mul(progress).mul(progress),
+                    float(1).sub(float(-2).mul(progress).add(2).pow(2).div(2))
+                  )
+                )
               )
-            )
-          )
+            );
+            // Interpolate friction intensity
+            const currentIntensity = mix(uniforms.frictionIntensityStart, uniforms.frictionIntensityEnd, easedProgress);
+            // Map intensity to speed scale
+            return float(1).sub(currentIntensity.mul(0.9));
+          })()
         );
-        
-        // Interpolate friction intensity between start and end
-        // intensity: 1 = max friction (almost stopped), 0 = no friction (normal), negative = boost
-        const currentIntensity = mix(uniforms.frictionIntensityStart, uniforms.frictionIntensityEnd, easedProgress);
-        
-        // Map intensity to speed scale (throttle, not destructive):
-        // intensity  1 → scale 0.1 (move at 10% speed)
-        // intensity  0 → scale 1.0 (move at full speed)
-        // intensity -1 → scale 1.9 (move at 190% speed)
-        // This doesn't destroy velocity - it just throttles how much is applied to position
-        const speedScale = float(1).sub(currentIntensity.mul(0.9));
         
         // Curl noise turbulence
         const turbIntensity = uniforms.turbulenceIntensity;
@@ -1024,7 +1219,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
         });
       });
     })().compute(activeMaxParticles);
-  }, [activeMaxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, uniforms]);
+  }, [activeMaxParticles, positions, velocities, lifetimes, fadeRates, particleSizes, particleRotations, uniforms, curveTexture]);
 
   // Material (either Sprite or Mesh material based on geometry prop)
   const material = useMemo(() => {
@@ -1041,8 +1236,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
     const currentColor = mix(pColorStart, pColorEnd, progress);
     const intensifiedColor = currentColor.mul(uniforms.intensity);
     
-    const sizeMultiplier = mix(uniforms.fadeSizeStart, uniforms.fadeSizeEnd, progress);
-    const opacityMultiplier = mix(uniforms.fadeOpacityStart, uniforms.fadeOpacityEnd, progress);
+    // Sample combined curve texture (R=size, G=opacity, B=velocity)
+    // Each channel contains the eased interpolation factor at the given progress
+    const curveSample = texture(curveTexture, vec2(progress, float(0.5)));
+    const fadeSizeEased = curveSample.x;     // R channel - size curve
+    const fadeOpacityEased = curveSample.y;  // G channel - opacity curve
+    // B channel (velocity) is used in compute shader
+    
+    const sizeMultiplier = mix(uniforms.fadeSizeStart, uniforms.fadeSizeEnd, fadeSizeEased);
+    const opacityMultiplier = mix(uniforms.fadeOpacityStart, uniforms.fadeOpacityEnd, fadeOpacityEased);
     
     // Calculate UV - with flipbook support
     let sampleUV = uv();
@@ -1160,57 +1362,144 @@ export const VFXParticles = forwardRef(function VFXParticles(
           break;
       }
       
-      // Scale local position and add particle world position
-      const scale = particleSize.mul(sizeMultiplier);
+      // Calculate effective velocity for stretch (uses velocity curve if enabled)
+      // B channel of curveTexture contains velocity curve value
+      const velocityCurveValue = curveSample.z;
+      const effectiveVelocityMultiplier = uniforms.velocityCurveEnabled.greaterThan(0.5).select(
+        velocityCurveValue,
+        float(1)
+      );
+      const effectiveSpeed = particleVel.length().mul(effectiveVelocityMultiplier);
       
-      let rotX, rotY, rotZ;
+      // Calculate stretch factor based on effective speed
+      // stretchAmount: 1.0 = no stretch, higher = more elongated
+      const stretchAmount = uniforms.stretchEnabled.greaterThan(0.5).select(
+        float(1).add(effectiveSpeed.mul(uniforms.stretchFactor)).min(uniforms.stretchMax),
+        float(1)
+      );
+      
+      // Base scale
+      const baseScale = particleSize.mul(sizeMultiplier);
+      
+      // Axis type: 0=+X, 1=+Y, 2=+Z, 3=-X, 4=-Y, 5=-Z
+      const axisType = uniforms.orientAxisType;
+      
+      // Get axis sign (1 for +, -1 for -)
+      const axisSign = axisType.lessThan(3).select(float(1), float(-1));
+      
+      // Get axis index (0=X, 1=Y, 2=Z)
+      const axisIndex = axisType.mod(3);
+      
+      // Apply stretch along the chosen LOCAL axis BEFORE rotation
+      // Scale the chosen axis by stretchAmount
+      const stretchedLocal = uniforms.stretchEnabled.greaterThan(0.5).select(
+        axisIndex.lessThan(0.5).select(
+          // X axis stretch
+          vec3(positionLocal.x.mul(stretchAmount), positionLocal.y, positionLocal.z),
+          axisIndex.lessThan(1.5).select(
+            // Y axis stretch  
+            vec3(positionLocal.x, positionLocal.y.mul(stretchAmount), positionLocal.z),
+            // Z axis stretch
+            vec3(positionLocal.x, positionLocal.y, positionLocal.z.mul(stretchAmount))
+          )
+        ),
+        positionLocal
+      );
+      
+      let rotatedPos;
       
       if (activeOrientToDirection) {
-        // Calculate rotation from velocity to orient geometry along movement direction
-        // Yaw (Y rotation) - direction on XZ plane
-        rotY = atan(particleVel.x, particleVel.z);
+        // Calculate velocity direction
+        const velLen = particleVel.length().max(0.0001);
+        const velDir = particleVel.div(velLen).mul(axisSign);
         
-        // Pitch (X rotation) - vertical angle
-        const horizontalSpeed = sqrt(particleVel.x.mul(particleVel.x).add(particleVel.z.mul(particleVel.z)));
-        rotX = atan(particleVel.y.negate(), horizontalSpeed);
+        // Get the local axis we want to align with velocity
+        // axisIndex: 0=X, 1=Y, 2=Z
+        const localAxis = axisIndex.lessThan(0.5).select(
+          vec3(1, 0, 0), // X axis
+          axisIndex.lessThan(1.5).select(
+            vec3(0, 1, 0), // Y axis
+            vec3(0, 0, 1)  // Z axis
+          )
+        );
         
-        // No roll
-        rotZ = float(0);
+        // Rodrigues' rotation formula to rotate localAxis to velDir
+        // rotation axis = cross(localAxis, velDir)
+        // rotation angle = acos(dot(localAxis, velDir))
+        
+        const dotProduct = localAxis.dot(velDir).clamp(-1, 1);
+        const crossProduct = localAxis.cross(velDir);
+        const crossLen = crossProduct.length();
+        
+        // Handle near-parallel cases (vectors already aligned or opposite)
+        const needsRotation = crossLen.greaterThan(0.0001);
+        
+        // Normalized rotation axis
+        const rotAxis = needsRotation.select(
+          crossProduct.div(crossLen),
+          vec3(0, 1, 0) // Fallback axis (won't be used if no rotation needed)
+        );
+        
+        // Rodrigues' formula: v_rot = v*cos(θ) + (k×v)*sin(θ) + k*(k·v)*(1-cos(θ))
+        // where k is rotation axis, θ is angle, v is the point to rotate
+        const cosAngle = dotProduct;
+        const sinAngle = crossLen; // sin(acos(dot)) = |cross|
+        const oneMinusCos = float(1).sub(cosAngle);
+        
+        // Apply rotation to the stretched position
+        const v = stretchedLocal;
+        const kDotV = rotAxis.dot(v);
+        const kCrossV = rotAxis.cross(v);
+        
+        // Rodrigues' formula applied
+        const rotatedByAxis = needsRotation.select(
+          v.mul(cosAngle).add(kCrossV.mul(sinAngle)).add(rotAxis.mul(kDotV.mul(oneMinusCos))),
+          // If vectors are nearly aligned, check if they're opposite (dot ≈ -1)
+          dotProduct.lessThan(-0.99).select(
+            v.negate(), // Flip 180° - just negate
+            v // Already aligned, no rotation
+          )
+        );
+        
+        rotatedPos = rotatedByAxis;
       } else {
-        // Use stored particle rotation
-        rotX = particleRotation.x;
-        rotY = particleRotation.y;
-        rotZ = particleRotation.z;
+        // Use stored particle rotation (Euler angles)
+        const rotX = particleRotation.x;
+        const rotY = particleRotation.y;
+        const rotZ = particleRotation.z;
+        
+        // Rotation around X axis
+        const cX = cos(rotX);
+        const sX = sin(rotX);
+        const afterX = vec3(
+          stretchedLocal.x,
+          stretchedLocal.y.mul(cX).sub(stretchedLocal.z.mul(sX)),
+          stretchedLocal.y.mul(sX).add(stretchedLocal.z.mul(cX))
+        );
+        
+        // Rotation around Y axis
+        const cY = cos(rotY);
+        const sY = sin(rotY);
+        const afterY = vec3(
+          afterX.x.mul(cY).add(afterX.z.mul(sY)),
+          afterX.y,
+          afterX.z.mul(cY).sub(afterX.x.mul(sY))
+        );
+        
+        // Rotation around Z axis
+        const cZ = cos(rotZ);
+        const sZ = sin(rotZ);
+        rotatedPos = vec3(
+          afterY.x.mul(cZ).sub(afterY.y.mul(sZ)),
+          afterY.x.mul(sZ).add(afterY.y.mul(cZ)),
+          afterY.z
+        );
       }
       
-      // Rotation around X axis
-      const cX = cos(rotX);
-      const sX = sin(rotX);
-      const afterX = vec3(
-        positionLocal.x,
-        positionLocal.y.mul(cX).sub(positionLocal.z.mul(sX)),
-        positionLocal.y.mul(sX).add(positionLocal.z.mul(cX))
-      );
+      // Apply base scale
+      const scaledPos = rotatedPos.mul(baseScale);
       
-      // Rotation around Y axis
-      const cY = cos(rotY);
-      const sY = sin(rotY);
-      const afterY = vec3(
-        afterX.x.mul(cY).add(afterX.z.mul(sY)),
-        afterX.y,
-        afterX.z.mul(cY).sub(afterX.x.mul(sY))
-      );
-      
-      // Rotation around Z axis
-      const cZ = cos(rotZ);
-      const sZ = sin(rotZ);
-      const rotatedPos = vec3(
-        afterY.x.mul(cZ).sub(afterY.y.mul(sZ)),
-        afterY.x.mul(sZ).add(afterY.y.mul(cZ)),
-        afterY.z
-      );
-      
-      mat.positionNode = rotatedPos.mul(scale).add(particlePos);
+      mat.positionNode = scaledPos.add(particlePos);
       
       // Apply custom colorNode if provided, otherwise use default
       const defaultColor = vec4(intensifiedColor, finalOpacity);
@@ -1273,7 +1562,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, activeAppearance, alphaMap, flipbook, blending, activeGeometry, activeOrientToDirection, activeLighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, activeAppearance, alphaMap, flipbook, blending, activeGeometry, activeOrientToDirection, activeLighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles, curveTexture]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
@@ -1440,6 +1729,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
     spawnInternal(px + x, py + y, pz + z, count, overrides);
   }, [spawnInternal]);
 
+  // Keep computeUpdate in a ref so useFrame always has the latest version
+  const computeUpdateRef = useRef(computeUpdate);
+  useEffect(() => {
+    computeUpdateRef.current = computeUpdate;
+  }, [computeUpdate]);
+
   // Update each frame + auto emit
   useFrame(async (state, delta) => {
     if (!initialized.current || !renderer) return;
@@ -1451,8 +1746,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     const turbSpeed = turbulenceRef.current?.speed ?? 1;
     uniforms.turbulenceTime.value += delta * turbSpeed;
     
-    // Update particles
-    await renderer.computeAsync(computeUpdate);
+    // Update particles - use ref to always get latest computeUpdate
+    await renderer.computeAsync(computeUpdateRef.current);
     
     // Auto emit if enabled
     if (emitting) {
@@ -1550,20 +1845,55 @@ export const VFXParticles = forwardRef(function VFXParticles(
   
   // Imperative update function called by debug panel
   const handleDebugUpdate = useCallback((newValues) => {
-    debugValuesRef.current = newValues;
+    // Merge new values into existing (dirty tracking only sends changed keys)
+    debugValuesRef.current = { ...debugValuesRef.current, ...newValues };
     
     // Size
-    const sizeR = toRange(newValues.size, [0.1, 0.3]);
-    uniforms.sizeMin.value = sizeR[0];
-    uniforms.sizeMax.value = sizeR[1];
+    if ('size' in newValues) {
+      const sizeR = toRange(newValues.size, [0.1, 0.3]);
+      uniforms.sizeMin.value = sizeR[0];
+      uniforms.sizeMax.value = sizeR[1];
+    }
     
-    // Fade
-    const fadeSizeR = toRange(newValues.fadeSize, [1, 0]);
-    const fadeOpacityR = toRange(newValues.fadeOpacity, [1, 0]);
-    uniforms.fadeSizeStart.value = fadeSizeR[0];
-    uniforms.fadeSizeEnd.value = fadeSizeR[1];
-    uniforms.fadeOpacityStart.value = fadeOpacityR[0];
-    uniforms.fadeOpacityEnd.value = fadeOpacityR[1];
+    // Fade Size
+    if ('fadeSize' in newValues) {
+      const fadeSizeR = toRange(newValues.fadeSize, [1, 0]);
+      uniforms.fadeSizeStart.value = fadeSizeR[0];
+      uniforms.fadeSizeEnd.value = fadeSizeR[1];
+    }
+    
+    // Fade Opacity
+    if ('fadeOpacity' in newValues) {
+      const fadeOpacityR = toRange(newValues.fadeOpacity, [1, 0]);
+      uniforms.fadeOpacityStart.value = fadeOpacityR[0];
+      uniforms.fadeOpacityEnd.value = fadeOpacityR[1];
+    }
+    
+    // Curves - update state to trigger texture regeneration
+    // Only set if the key exists (to allow clearing curves by setting to null)
+    if ('fadeSizeCurve' in newValues) {
+      setActiveFadeSizeCurve(newValues.fadeSizeCurve);
+    }
+    if ('fadeOpacityCurve' in newValues) {
+      setActiveFadeOpacityCurve(newValues.fadeOpacityCurve);
+    }
+    if ('velocityCurve' in newValues) {
+      setActiveVelocityCurve(newValues.velocityCurve);
+      // Update velocity curve enabled uniform
+      uniforms.velocityCurveEnabled.value = newValues.velocityCurve ? 1 : 0;
+    }
+    
+    // Orient axis
+    if ('orientAxis' in newValues) {
+      uniforms.orientAxisType.value = axisToNumber(newValues.orientAxis);
+    }
+    
+    // Stretch by speed
+    if ('stretchBySpeed' in newValues) {
+      uniforms.stretchEnabled.value = newValues.stretchBySpeed ? 1 : 0;
+      uniforms.stretchFactor.value = newValues.stretchBySpeed?.factor ?? 1;
+      uniforms.stretchMax.value = newValues.stretchBySpeed?.maxStretch ?? 5;
+    }
     
     // Physics - update gravity Vector3 components directly
     if (newValues.gravity && Array.isArray(newValues.gravity)) {
@@ -1572,17 +1902,22 @@ export const VFXParticles = forwardRef(function VFXParticles(
       uniforms.gravity.value.z = newValues.gravity[2];
     }
     
-    const speedR = toRange(newValues.speed, [0.1, 0.1]);
-    uniforms.speedMin.value = speedR[0];
-    uniforms.speedMax.value = speedR[1];
+    // Speed
+    if ('speed' in newValues) {
+      const speedR = toRange(newValues.speed, [0.1, 0.1]);
+      uniforms.speedMin.value = speedR[0];
+      uniforms.speedMax.value = speedR[1];
+    }
     
     // Lifetime
-    const lifetimeR = toRange(newValues.lifetime, [1, 2]);
-    uniforms.lifetimeMin.value = 1 / lifetimeR[1];
-    uniforms.lifetimeMax.value = 1 / lifetimeR[0];
+    if ('lifetime' in newValues) {
+      const lifetimeR = toRange(newValues.lifetime, [1, 2]);
+      uniforms.lifetimeMin.value = 1 / lifetimeR[1];
+      uniforms.lifetimeMax.value = 1 / lifetimeR[0];
+    }
     
     // Friction
-    if (newValues.friction) {
+    if ('friction' in newValues && newValues.friction) {
       const frictionR = toRange(newValues.friction.intensity, [0, 0]);
       uniforms.frictionIntensityStart.value = frictionR[0];
       uniforms.frictionIntensityEnd.value = frictionR[1];
@@ -1590,46 +1925,56 @@ export const VFXParticles = forwardRef(function VFXParticles(
     }
     
     // Direction 3D
-    const dir3D = toRotation3D(newValues.direction);
-    uniforms.dirMinX.value = dir3D[0][0];
-    uniforms.dirMaxX.value = dir3D[0][1];
-    uniforms.dirMinY.value = dir3D[1][0];
-    uniforms.dirMaxY.value = dir3D[1][1];
-    uniforms.dirMinZ.value = dir3D[2][0];
-    uniforms.dirMaxZ.value = dir3D[2][1];
+    if ('direction' in newValues) {
+      const dir3D = toRotation3D(newValues.direction);
+      uniforms.dirMinX.value = dir3D[0][0];
+      uniforms.dirMaxX.value = dir3D[0][1];
+      uniforms.dirMinY.value = dir3D[1][0];
+      uniforms.dirMaxY.value = dir3D[1][1];
+      uniforms.dirMinZ.value = dir3D[2][0];
+      uniforms.dirMaxZ.value = dir3D[2][1];
+    }
     
     // Start position 3D
-    const startPos3D = toRotation3D(newValues.startPosition);
-    uniforms.startPosMinX.value = startPos3D[0][0];
-    uniforms.startPosMaxX.value = startPos3D[0][1];
-    uniforms.startPosMinY.value = startPos3D[1][0];
-    uniforms.startPosMaxY.value = startPos3D[1][1];
-    uniforms.startPosMinZ.value = startPos3D[2][0];
-    uniforms.startPosMaxZ.value = startPos3D[2][1];
+    if ('startPosition' in newValues) {
+      const startPos3D = toRotation3D(newValues.startPosition);
+      uniforms.startPosMinX.value = startPos3D[0][0];
+      uniforms.startPosMaxX.value = startPos3D[0][1];
+      uniforms.startPosMinY.value = startPos3D[1][0];
+      uniforms.startPosMaxY.value = startPos3D[1][1];
+      uniforms.startPosMinZ.value = startPos3D[2][0];
+      uniforms.startPosMaxZ.value = startPos3D[2][1];
+    }
     
     // Rotation 3D
-    const rot3D = toRotation3D(newValues.rotation);
-    uniforms.rotationMinX.value = rot3D[0][0];
-    uniforms.rotationMaxX.value = rot3D[0][1];
-    uniforms.rotationMinY.value = rot3D[1][0];
-    uniforms.rotationMaxY.value = rot3D[1][1];
-    uniforms.rotationMinZ.value = rot3D[2][0];
-    uniforms.rotationMaxZ.value = rot3D[2][1];
+    if ('rotation' in newValues) {
+      const rot3D = toRotation3D(newValues.rotation);
+      uniforms.rotationMinX.value = rot3D[0][0];
+      uniforms.rotationMaxX.value = rot3D[0][1];
+      uniforms.rotationMinY.value = rot3D[1][0];
+      uniforms.rotationMaxY.value = rot3D[1][1];
+      uniforms.rotationMinZ.value = rot3D[2][0];
+      uniforms.rotationMaxZ.value = rot3D[2][1];
+    }
     
     // Rotation speed 3D
-    const rotSpeed3D = toRotation3D(newValues.rotationSpeed);
-    uniforms.rotationSpeedMinX.value = rotSpeed3D[0][0];
-    uniforms.rotationSpeedMaxX.value = rotSpeed3D[0][1];
-    uniforms.rotationSpeedMinY.value = rotSpeed3D[1][0];
-    uniforms.rotationSpeedMaxY.value = rotSpeed3D[1][1];
-    uniforms.rotationSpeedMinZ.value = rotSpeed3D[2][0];
-    uniforms.rotationSpeedMaxZ.value = rotSpeed3D[2][1];
+    if ('rotationSpeed' in newValues) {
+      const rotSpeed3D = toRotation3D(newValues.rotationSpeed);
+      uniforms.rotationSpeedMinX.value = rotSpeed3D[0][0];
+      uniforms.rotationSpeedMaxX.value = rotSpeed3D[0][1];
+      uniforms.rotationSpeedMinY.value = rotSpeed3D[1][0];
+      uniforms.rotationSpeedMaxY.value = rotSpeed3D[1][1];
+      uniforms.rotationSpeedMinZ.value = rotSpeed3D[2][0];
+      uniforms.rotationSpeedMaxZ.value = rotSpeed3D[2][1];
+    }
     
     // Intensity
-    uniforms.intensity.value = newValues.intensity || 1;
+    if ('intensity' in newValues) {
+      uniforms.intensity.value = newValues.intensity || 1;
+    }
     
     // Colors
-    if (newValues.colorStart) {
+    if ('colorStart' in newValues && newValues.colorStart) {
       const startColors = newValues.colorStart.slice(0, 8).map(hexToRgb);
       while (startColors.length < 8) startColors.push(startColors[startColors.length - 1] || [1, 1, 1]);
       uniforms.colorStartCount.value = newValues.colorStart.length;
@@ -1640,30 +1985,44 @@ export const VFXParticles = forwardRef(function VFXParticles(
       });
     }
     
-    // If colorEnd is null, use colorStart for end colors (no color transition)
-    const effectiveEndColors = newValues.colorEnd || newValues.colorStart;
-    if (effectiveEndColors) {
-      const endColors = effectiveEndColors.slice(0, 8).map(hexToRgb);
-      while (endColors.length < 8) endColors.push(endColors[endColors.length - 1] || [1, 1, 1]);
-      uniforms.colorEndCount.value = effectiveEndColors.length;
-      endColors.forEach((c, i) => {
-        if (uniforms[`colorEnd${i}`]) {
-          uniforms[`colorEnd${i}`].value.setRGB(...c);
-        }
-      });
+    // Color End - if colorEnd is explicitly set (including null), handle it
+    if ('colorEnd' in newValues) {
+      // If colorEnd is null/falsy, use colorStart for end colors (no color transition)
+      // Fall back to debugValuesRef if newValues.colorStart isn't present
+      const effectiveEndColors = newValues.colorEnd || newValues.colorStart || debugValuesRef.current?.colorStart || ["#ffffff"];
+      if (effectiveEndColors) {
+        const endColors = effectiveEndColors.slice(0, 8).map(hexToRgb);
+        while (endColors.length < 8) endColors.push(endColors[endColors.length - 1] || [1, 1, 1]);
+        uniforms.colorEndCount.value = effectiveEndColors.length;
+        endColors.forEach((c, i) => {
+          if (uniforms[`colorEnd${i}`]) {
+            uniforms[`colorEnd${i}`].value.setRGB(...c);
+          }
+        });
+      }
     }
     
     // Emitter shape
-    uniforms.emitterShapeType.value = newValues.emitterShape ?? EmitterShape.BOX;
-    const emitterRadiusR = toRange(newValues.emitterRadius, [0, 1]);
-    uniforms.emitterRadiusInner.value = emitterRadiusR[0];
-    uniforms.emitterRadiusOuter.value = emitterRadiusR[1];
-    uniforms.emitterAngle.value = newValues.emitterAngle ?? Math.PI / 4;
-    const emitterHeightR = toRange(newValues.emitterHeight, [0, 1]);
-    uniforms.emitterHeightMin.value = emitterHeightR[0];
-    uniforms.emitterHeightMax.value = emitterHeightR[1];
-    uniforms.emitterSurfaceOnly.value = newValues.emitterSurfaceOnly ? 1 : 0;
-    if (newValues.emitterDirection && Array.isArray(newValues.emitterDirection)) {
+    if ('emitterShape' in newValues) {
+      uniforms.emitterShapeType.value = newValues.emitterShape ?? EmitterShape.BOX;
+    }
+    if ('emitterRadius' in newValues) {
+      const emitterRadiusR = toRange(newValues.emitterRadius, [0, 1]);
+      uniforms.emitterRadiusInner.value = emitterRadiusR[0];
+      uniforms.emitterRadiusOuter.value = emitterRadiusR[1];
+    }
+    if ('emitterAngle' in newValues) {
+      uniforms.emitterAngle.value = newValues.emitterAngle ?? Math.PI / 4;
+    }
+    if ('emitterHeight' in newValues) {
+      const emitterHeightR = toRange(newValues.emitterHeight, [0, 1]);
+      uniforms.emitterHeightMin.value = emitterHeightR[0];
+      uniforms.emitterHeightMax.value = emitterHeightR[1];
+    }
+    if ('emitterSurfaceOnly' in newValues) {
+      uniforms.emitterSurfaceOnly.value = newValues.emitterSurfaceOnly ? 1 : 0;
+    }
+    if ('emitterDirection' in newValues && newValues.emitterDirection && Array.isArray(newValues.emitterDirection)) {
       const dir = new THREE.Vector3(...newValues.emitterDirection).normalize();
       uniforms.emitterDir.value.x = dir.x;
       uniforms.emitterDir.value.y = dir.y;
@@ -1671,24 +2030,35 @@ export const VFXParticles = forwardRef(function VFXParticles(
     }
     
     // Turbulence
-    uniforms.turbulenceIntensity.value = newValues.turbulence?.intensity ?? 0;
-    uniforms.turbulenceFrequency.value = newValues.turbulence?.frequency ?? 1;
-    uniforms.turbulenceSpeed.value = newValues.turbulence?.speed ?? 1;
+    if ('turbulence' in newValues) {
+      uniforms.turbulenceIntensity.value = newValues.turbulence?.intensity ?? 0;
+      uniforms.turbulenceFrequency.value = newValues.turbulence?.frequency ?? 1;
+      uniforms.turbulenceSpeed.value = newValues.turbulence?.speed ?? 1;
+      turbulenceRef.current = newValues.turbulence;
+    }
     
     // Attract to center
-    uniforms.attractToCenter.value = newValues.attractToCenter ? 1 : 0;
+    if ('attractToCenter' in newValues) {
+      uniforms.attractToCenter.value = newValues.attractToCenter ? 1 : 0;
+    }
     
     // Soft particles
-    uniforms.softParticlesEnabled.value = newValues.softParticles ? 1 : 0;
-    uniforms.softDistance.value = newValues.softDistance ?? 0.5;
+    if ('softParticles' in newValues) {
+      uniforms.softParticlesEnabled.value = newValues.softParticles ? 1 : 0;
+    }
+    if ('softDistance' in newValues) {
+      uniforms.softDistance.value = newValues.softDistance ?? 0.5;
+    }
     
     // Collision
-    uniforms.collisionEnabled.value = newValues.collision ? 1 : 0;
-    uniforms.collisionPlaneY.value = newValues.collision?.plane?.y ?? 0;
-    uniforms.collisionBounce.value = newValues.collision?.bounce ?? 0.3;
-    uniforms.collisionFriction.value = newValues.collision?.friction ?? 0.8;
-    uniforms.collisionDie.value = newValues.collision?.die ? 1 : 0;
-    uniforms.sizeBasedGravity.value = newValues.collision?.sizeBasedGravity ?? 0;
+    if ('collision' in newValues) {
+      uniforms.collisionEnabled.value = newValues.collision ? 1 : 0;
+      uniforms.collisionPlaneY.value = newValues.collision?.plane?.y ?? 0;
+      uniforms.collisionBounce.value = newValues.collision?.bounce ?? 0.3;
+      uniforms.collisionFriction.value = newValues.collision?.friction ?? 0.8;
+      uniforms.collisionDie.value = newValues.collision?.die ? 1 : 0;
+      uniforms.sizeBasedGravity.value = newValues.collision?.sizeBasedGravity ?? 0;
+    }
     
     // Position ref update
     if (newValues.position) {
@@ -1696,9 +2066,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
     }
     
     // Runtime refs update (for values used in useFrame)
-    delayRef.current = newValues.delay ?? 0;
-    emitCountRef.current = newValues.emitCount ?? 1;
-    turbulenceRef.current = newValues.turbulence;
+    if ('delay' in newValues) delayRef.current = newValues.delay ?? 0;
+    if ('emitCount' in newValues) emitCountRef.current = newValues.emitCount ?? 1;
+    // turbulenceRef is updated in the turbulence block above
     
     // Update emitting state
     if (newValues.autoStart !== undefined) {
@@ -1730,30 +2100,38 @@ export const VFXParticles = forwardRef(function VFXParticles(
       setActiveShadow(newValues.shadow);
     }
     
-    // Handle geometry type and args changes - only recreate if actually changed
-    const geoType = newValues.geometryType;
-    const geoArgs = newValues.geometryArgs;
-    const geoTypeChanged = geoType !== prevGeometryTypeRef.current;
-    const geoArgsChanged = JSON.stringify(geoArgs) !== JSON.stringify(prevGeometryArgsRef.current);
-    
-    if (geoTypeChanged || geoArgsChanged) {
-      prevGeometryTypeRef.current = geoType;
-      prevGeometryArgsRef.current = geoArgs;
+    // Handle geometry type and args changes - only recreate if those keys were actually changed
+    if ('geometryType' in newValues || 'geometryArgs' in newValues) {
+      const geoType = newValues.geometryType ?? prevGeometryTypeRef.current;
+      const geoArgs = newValues.geometryArgs ?? prevGeometryArgsRef.current;
+      const geoTypeChanged = 'geometryType' in newValues && geoType !== prevGeometryTypeRef.current;
+      const geoArgsChanged = 'geometryArgs' in newValues && JSON.stringify(geoArgs) !== JSON.stringify(prevGeometryArgsRef.current);
       
-      import("./VFXParticlesDebugPanel").then(({ createGeometry, GeometryType }) => {
-        if (geoType === GeometryType.NONE || !geoType) {
-          if (activeGeometry !== null) {
+      if (geoTypeChanged || geoArgsChanged) {
+        prevGeometryTypeRef.current = geoType;
+        prevGeometryArgsRef.current = geoArgs;
+        
+        import("./VFXParticlesDebugPanel").then(({ createGeometry, GeometryType }) => {
+          if (geoType === GeometryType.NONE || !geoType) {
+            // Dispose old geometry if switching to sprite mode
+            if (activeGeometry !== null && !geometry) {
+              activeGeometry.dispose();
+            }
             setActiveGeometry(null);
+          } else {
+            const newGeometry = createGeometry(geoType, geoArgs);
+            if (newGeometry) {
+              // Dispose old geometry if it was created by debug panel (not from props)
+              if (activeGeometry !== null && activeGeometry !== geometry) {
+                activeGeometry.dispose();
+              }
+              setActiveGeometry(newGeometry);
+            }
           }
-        } else {
-          const newGeometry = createGeometry(geoType, geoArgs);
-          if (newGeometry) {
-            setActiveGeometry(newGeometry);
-          }
-        }
-      });
+        });
+      }
     }
-  }, [uniforms, material, renderObject, activeMaxParticles, activeLighting, activeAppearance, activeOrientToDirection, activeShadow, activeGeometry]);
+  }, [uniforms, material, renderObject, activeMaxParticles, activeLighting, activeAppearance, activeOrientToDirection, activeShadow, activeGeometry, geometry]);
 
   // Initialize debug panel once on mount if debug is enabled
   useEffect(() => {
@@ -1766,7 +2144,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
       colorStart,
       colorEnd,
       fadeSize,
+      fadeSizeCurve: fadeSizeCurve || null, // null = linear (no curve)
       fadeOpacity,
+      fadeOpacityCurve: fadeOpacityCurve || null, // null = linear (no curve)
+      velocityCurve: velocityCurve || null, // null = use friction (no curve)
       gravity,
       lifetime,
       direction,
@@ -1777,6 +2158,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       rotation,
       rotationSpeed,
       orientToDirection,
+      orientAxis,
+      stretchBySpeed: stretchBySpeed || null,
       lighting,
       shadow,
       blending,
@@ -1925,7 +2308,19 @@ export const VFXParticles = forwardRef(function VFXParticles(
         destroyDebugPanel();
       });
     };
-  }, [debug]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debug, geometry]);
+  
+  // Update debug panel callback when handleDebugUpdate changes (e.g., after state changes)
+  useEffect(() => {
+    if (!debug) return;
+    import("./VFXParticlesDebugPanel").then(({ updateDebugPanel }) => {
+      if (debugValuesRef.current) {
+        // Pass a NEW object copy to trigger the reference check in debug panel
+        updateDebugPanel({ ...debugValuesRef.current }, handleDebugUpdate);
+      }
+    });
+  }, [debug, handleDebugUpdate]);
 
   return <primitive ref={spriteRef} object={renderObject} />;
 });

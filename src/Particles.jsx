@@ -7,6 +7,8 @@ import {
   SphereGeometry,
   RepeatWrapping,
   LinearFilter,
+  ConeGeometry,
+  DodecahedronGeometry
 } from "three/webgpu";
 import { useGLTF } from "@react-three/drei";
 import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -385,7 +387,7 @@ export const Particles = () => {
       /> */}
 
       {/* Bouncing spheres with floor collision */}
-      <VFXParticles
+      {/* <VFXParticles
   geometry={new BoxGeometry(0.1, 0.1, 1.5, 1, 1, 1)}
   position={[0, 0, 0]}
   intensity={4.5}
@@ -418,24 +420,108 @@ export const Particles = () => {
     frequency: 1.99,
     speed: 0.19
   }}
-/>
+/> */}
+
 <VFXParticles
 debug
-  geometry={new BoxGeometry(0.1, 0.1, 1.5, 1, 1, 1)}
+  geometry={new DodecahedronGeometry(0.5, 0)}
   position={[0, 0, 0]}
+  size={[0.1, 0.3]}
+  fadeSize={[1, 0]}
+  colorStart={["#ffffff"]}
+  fadeOpacity={[1, 0]}
+  gravity={[0, 0.001, 0]}
+  speed={[0, 0]}
+  lifetime={[1, 2]}
+  friction={{
+    intensity: 0,
+    easing: "linear"
+  }}
+  direction={[[-1, 1], [0, 1], [-1, 1]]}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  appearance="gradient"
+  blending={1}
+  lighting="standard"
+  emitterShape={1}
+  emitterRadius={[0, 1]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
+/>
+{/* <VFXParticles
+debug
+  maxParticles={100}
+  position={[0, 0, 0]}
+  delay={0.3}
   intensity={4.5}
   size={[0.01, 0.3]}
   fadeSize={[1, 0]}
+  fadeSizeCurve={{
+    points: [
+      {
+        pos: [0, 0],
+        handleOut: [0.1, 0]
+      },
+      {
+        pos: [0.36, 1],
+        handleIn: [0, 0],
+        handleOut: [0, 0]
+      },
+      {
+        pos: [0.4666666666666667, 0.10000000000000009],
+        handleIn: [-0.032, 0],
+        handleOut: [0.032, 0]
+      },
+      {
+        pos: [0.5733333333333334, 1],
+        handleIn: [0, 0],
+        handleOut: [0, 0]
+      },
+      {
+        pos: [0.68, 0.55],
+        handleIn: [-0.032, 0],
+        handleOut: [0.032, 0]
+      },
+      {
+        pos: [0.7866666666666667, 1],
+        handleIn: [0, 0],
+        handleOut: [0, 0]
+      },
+      {
+        pos: [1, 1],
+        handleIn: [0, 0]
+      }
+    ]
+  }}
   colorStart={["#ff0000", "#ff6600", "#ffb30f"]}
   fadeOpacity={[1, 0]}
-  gravity={[0.5, 1.9, 0]}
-  speed={[0, 0.04]}
-  lifetime={[1, 2]}
+  gravity={[0, 0, 0]}
+  speed={[0, 0.03]}
+  lifetime={[1, 5]}
   friction={{
     intensity: 0.1,
     easing: "easeOut"
   }}
-  direction={[[-1, 1], [0, 1], [-1, 1]]}
+  velocityCurve={{
+    points: [
+      {
+        pos: [0, 0],
+        handleOut: [0.33, 0]
+      },
+      {
+        pos: [0.674971923828125, 0],
+        handleIn: [-0.1, 0],
+        handleOut: [0.1, 0]
+      },
+      {
+        pos: [1, 1],
+        handleIn: [-0.33, 0]
+      }
+    ]
+  }}
+  direction={[[-1, 1], [-1, 1], [-1, 1]]}
   startPosition={[[0, 0], [0, 0], [0, 0]]}
   rotation={[0, 0]}
   rotationSpeed={[0, 0]}
@@ -443,17 +529,12 @@ debug
   appearance="default"
   blending={2}
   lighting="basic"
-  emitterShape={1}
-  emitterRadius={[0, 1]}
+  emitterShape={2}
+  emitterRadius={[0.95, 1]}
   emitterAngle={0.7853981633974483}
   emitterHeight={[0, 1]}
   emitterDirection={[0, 1, 0]}
-  turbulence={{
-    intensity: 0.08,
-    frequency: 1.99,
-    speed: 0.19
-  }}
-/>
+/> */}
       {/* <VFXParticles
         // debug={true}
         autoStart={true}
