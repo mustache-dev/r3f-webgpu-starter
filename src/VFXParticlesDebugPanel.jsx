@@ -1465,6 +1465,9 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
   const localDataRef = useRef(value?.points || defaultValue.points);
   const [, forceUpdate] = useState(0);
   const [hoverItem, setHoverItem] = useState(null); // { type, index }
+  const [selectedPoint, setSelectedPoint] = useState(null); // index of selected point
+  const [isScaling, setIsScaling] = useState(false);
+  const scaleStartRef = useRef(null); // { mouseX, handleInLen, handleOutLen }
   
   // Logical size (CSS pixels)
   const SIZE = 260;
@@ -1593,6 +1596,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       const isLast = idx === pts.length - 1;
       const isDraggingPoint = draggingRef.current?.type === 'point' && draggingRef.current?.index === idx;
       const isHoveringPoint = hoverItem?.type === 'point' && hoverItem?.index === idx;
+      const isSelected = selectedPoint === idx;
       
       // Draw handleOut (for all except last)
       if (!isLast && pt.handleOut) {
@@ -1603,18 +1607,18 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         const isDraggingHandle = draggingRef.current?.type === 'handleOut' && draggingRef.current?.index === idx;
         const isHoveringHandle = hoverItem?.type === 'handleOut' && hoverItem?.index === idx;
         
-        // Handle line
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)';
-        ctx.lineWidth = 1.5;
+        // Handle line - highlight if selected
+        ctx.strokeStyle = isSelected ? 'rgba(100, 200, 255, 0.7)' : 'rgba(249, 115, 22, 0.5)';
+        ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.beginPath();
         ctx.moveTo(pos.x, pos.y);
         ctx.lineTo(handlePos.x, handlePos.y);
         ctx.stroke();
         
-        // Handle point
-        ctx.fillStyle = isDraggingHandle ? '#fff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        // Handle point - cyan if selected
+        ctx.fillStyle = isDraggingHandle ? '#fff' : isSelected ? '#64c8ff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
         ctx.beginPath();
-        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : 5, 0, Math.PI * 2);
+        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : isSelected ? 6 : 5, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 1.5;
@@ -1630,34 +1634,34 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         const isDraggingHandle = draggingRef.current?.type === 'handleIn' && draggingRef.current?.index === idx;
         const isHoveringHandle = hoverItem?.type === 'handleIn' && hoverItem?.index === idx;
         
-        // Handle line
-        ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)';
-        ctx.lineWidth = 1.5;
+        // Handle line - highlight if selected
+        ctx.strokeStyle = isSelected ? 'rgba(100, 200, 255, 0.7)' : 'rgba(249, 115, 22, 0.5)';
+        ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.beginPath();
         ctx.moveTo(pos.x, pos.y);
         ctx.lineTo(handlePos.x, handlePos.y);
         ctx.stroke();
         
-        // Handle point
-        ctx.fillStyle = isDraggingHandle ? '#fff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
+        // Handle point - cyan if selected
+        ctx.fillStyle = isDraggingHandle ? '#fff' : isSelected ? '#64c8ff' : isHoveringHandle ? wrapped.accentLight : 'rgba(249, 115, 22, 0.8)';
         ctx.beginPath();
-        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : 5, 0, Math.PI * 2);
+        ctx.arc(handlePos.x, handlePos.y, isDraggingHandle ? 7 : isSelected ? 6 : 5, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = 'white';
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
       
-      // Main point
-      ctx.fillStyle = isDraggingPoint ? '#fff' : isHoveringPoint ? wrapped.accentLight : wrapped.accent;
-      ctx.shadowColor = wrapped.accent;
-      ctx.shadowBlur = isDraggingPoint ? 15 : 8;
+      // Main point - cyan ring if selected
+      ctx.fillStyle = isDraggingPoint ? '#fff' : isSelected ? '#64c8ff' : isHoveringPoint ? wrapped.accentLight : wrapped.accent;
+      ctx.shadowColor = isSelected ? '#64c8ff' : wrapped.accent;
+      ctx.shadowBlur = isDraggingPoint ? 15 : isSelected ? 12 : 8;
       ctx.beginPath();
-      ctx.arc(pos.x, pos.y, isDraggingPoint ? 10 : 8, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, isDraggingPoint ? 10 : isSelected ? 9 : 8, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'white';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = isSelected ? '#fff' : 'white';
+      ctx.lineWidth = isSelected ? 3 : 2;
       ctx.stroke();
     });
     
@@ -1683,7 +1687,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     ctx.fillText('value →', 0, 0);
     ctx.restore();
     
-  }, [toCanvas, hoverItem, GRAPH_SIZE]);
+  }, [toCanvas, hoverItem, GRAPH_SIZE, selectedPoint, isScaling]);
   
   // Draw on mount and updates
   useEffect(() => {
@@ -1694,7 +1698,15 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
   const hitTest = useCallback((mx, my) => {
     const pts = localDataRef.current;
     
-    // Check handles first (smaller targets)
+    // Check points first (priority over handles)
+    for (let i = 0; i < pts.length; i++) {
+      const pos = toCanvas(pts[i].pos[0], pts[i].pos[1]);
+      if (Math.hypot(mx - pos.x, my - pos.y) < 15) {
+        return { type: 'point', index: i };
+      }
+    }
+    
+    // Then check handles
     for (let i = 0; i < pts.length; i++) {
       const pt = pts[i];
       
@@ -1721,14 +1733,6 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       }
     }
     
-    // Then check points
-    for (let i = 0; i < pts.length; i++) {
-      const pos = toCanvas(pts[i].pos[0], pts[i].pos[1]);
-      if (Math.hypot(mx - pos.x, my - pos.y) < 15) {
-        return { type: 'point', index: i };
-      }
-    }
-    
     return null;
   }, [toCanvas]);
   
@@ -1739,6 +1743,43 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       const rect = canvasRef.current.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
+      
+      // Handle scaling mode
+      if (isScaling && selectedPoint !== null && scaleStartRef.current) {
+        const deltaX = e.clientX - scaleStartRef.current.mouseX;
+        const scaleFactor = 1 + deltaX * 0.01; // 100px = 2x scale
+        const clampedScale = Math.max(0.1, Math.min(3, scaleFactor));
+        
+        const pts = localDataRef.current.map(p => ({ ...p }));
+        const pt = pts[selectedPoint];
+        
+        // Scale handleIn
+        if (pt.handleIn && scaleStartRef.current.handleIn) {
+          const origLen = scaleStartRef.current.handleInLen;
+          const origAngle = scaleStartRef.current.handleInAngle;
+          const newLen = origLen * clampedScale;
+          pt.handleIn = [
+            Math.cos(origAngle) * newLen,
+            Math.sin(origAngle) * newLen
+          ];
+        }
+        
+        // Scale handleOut
+        if (pt.handleOut && scaleStartRef.current.handleOut) {
+          const origLen = scaleStartRef.current.handleOutLen;
+          const origAngle = scaleStartRef.current.handleOutAngle;
+          const newLen = origLen * clampedScale;
+          pt.handleOut = [
+            Math.cos(origAngle) * newLen,
+            Math.sin(origAngle) * newLen
+          ];
+        }
+        
+        pts[selectedPoint] = pt;
+        localDataRef.current = pts;
+        draw();
+        return;
+      }
       
       if (draggingRef.current !== null) {
         const { x, y } = fromCanvas(mx, my);
@@ -1785,6 +1826,16 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     };
     
     const handleMouseUp = () => {
+      if (isScaling) {
+        // Confirm scale
+        onChange?.({ points: localDataRef.current });
+        setIsScaling(false);
+        scaleStartRef.current = null;
+        document.body.style.cursor = '';
+        draw();
+        return;
+      }
+      
       if (draggingRef.current !== null) {
         onChange?.({ points: localDataRef.current });
         draggingRef.current = null;
@@ -1793,14 +1844,66 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       }
     };
     
+    // Keyboard handlers for scale mode
+    const handleKeyDown = (e) => {
+      // 'S' to start scaling selected point's handles
+      if (e.key === 's' || e.key === 'S') {
+        if (selectedPoint !== null && !isScaling) {
+          const pt = localDataRef.current[selectedPoint];
+          scaleStartRef.current = {
+            mouseX: 0, // Will be set on first mouse move
+            handleIn: pt.handleIn ? [...pt.handleIn] : null,
+            handleOut: pt.handleOut ? [...pt.handleOut] : null,
+            handleInLen: pt.handleIn ? Math.hypot(pt.handleIn[0], pt.handleIn[1]) : 0,
+            handleOutLen: pt.handleOut ? Math.hypot(pt.handleOut[0], pt.handleOut[1]) : 0,
+            handleInAngle: pt.handleIn ? Math.atan2(pt.handleIn[1], pt.handleIn[0]) : 0,
+            handleOutAngle: pt.handleOut ? Math.atan2(pt.handleOut[1], pt.handleOut[0]) : 0,
+          };
+          // Get current mouse position
+          const getMouseX = (ev) => {
+            scaleStartRef.current.mouseX = ev.clientX;
+            document.removeEventListener('mousemove', getMouseX);
+          };
+          document.addEventListener('mousemove', getMouseX);
+          setIsScaling(true);
+          document.body.style.cursor = 'ew-resize';
+        }
+      }
+      
+      // Escape to cancel scaling or deselect
+      if (e.key === 'Escape') {
+        if (isScaling && scaleStartRef.current) {
+          // Restore original handles
+          const pts = localDataRef.current.map(p => ({ ...p }));
+          if (selectedPoint !== null) {
+            if (scaleStartRef.current.handleIn) {
+              pts[selectedPoint].handleIn = scaleStartRef.current.handleIn;
+            }
+            if (scaleStartRef.current.handleOut) {
+              pts[selectedPoint].handleOut = scaleStartRef.current.handleOut;
+            }
+            localDataRef.current = pts;
+          }
+          setIsScaling(false);
+          scaleStartRef.current = null;
+          document.body.style.cursor = '';
+          draw();
+        } else {
+          setSelectedPoint(null);
+        }
+      }
+    };
+    
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('keydown', handleKeyDown);
     
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [draw, fromCanvas, onChange, hitTest, hoverItem]);
+  }, [draw, fromCanvas, onChange, hitTest, hoverItem, selectedPoint, isScaling]);
   
   const handleMouseDown = useCallback((e) => {
     e.preventDefault();
@@ -1808,14 +1911,31 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     
+    // Cancel scaling mode on click
+    if (isScaling) {
+      onChange?.({ points: localDataRef.current });
+      setIsScaling(false);
+      scaleStartRef.current = null;
+      document.body.style.cursor = '';
+      return;
+    }
+    
     const hit = hitTest(mx, my);
     
     if (hit) {
+      // Select point on click
+      if (hit.type === 'point') {
+        setSelectedPoint(hit.index);
+      }
+      
       draggingRef.current = hit;
       document.body.style.cursor = 'grabbing';
       draw();
       return;
     }
+    
+    // Click on empty space deselects
+    setSelectedPoint(null);
     
     // Double-click to add a point
     if (e.detail === 2) {
@@ -1838,10 +1958,13 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         pts.splice(insertIdx, 0, newPoint);
         localDataRef.current = pts;
         onChange?.({ points: pts });
+        // Select the new point
+        setSelectedPoint(insertIdx);
         draw();
       }
     }
-  }, [draw, fromCanvas, onChange, hitTest]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draw, fromCanvas, onChange, hitTest, isScaling]);
   
   const handleContextMenu = useCallback((e) => {
     e.preventDefault();
@@ -1894,11 +2017,106 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
       { pos: [1, 1], handleIn: [-0.58, 0] }
     ]},
     { name: 'bounce', points: [
-      { pos: [0, 0], handleOut: [0.2, 0.6] },
-      { pos: [0.5, 0.8], handleIn: [-0.15, 0], handleOut: [0.15, 0] },
-      { pos: [1, 1], handleIn: [-0.1, 0.2] }
+      // Bounce out - ball dropping and bouncing, sharp peaks at value 1
+      { pos: [0, 0], handleOut: [0.12, 0] },
+      { pos: [0.36, 1], handleIn: [0, 0], handleOut: [0, 0] },
+      { pos: [0.54, 0.75], handleIn: [-0.04, 0], handleOut: [0.04, 0] },
+      { pos: [0.72, 1], handleIn: [0, 0], handleOut: [0, 0] },
+      { pos: [0.82, 0.94], handleIn: [-0.02, 0], handleOut: [0.02, 0] },
+      { pos: [0.91, 1], handleIn: [0, 0], handleOut: [0, 0] },
+      { pos: [1, 1], handleIn: [0, 0] }
+    ]},
+    { name: 'elastic', points: [
+      // Elastic out - overshoots and oscillates
+      { pos: [0, 0], handleOut: [0.15, 0.8] },
+      { pos: [0.35, 1.15], handleIn: [-0.08, 0.1], handleOut: [0.08, -0.1] },
+      { pos: [0.55, 0.92], handleIn: [-0.06, -0.05], handleOut: [0.06, 0.05] },
+      { pos: [0.75, 1.03], handleIn: [-0.05, 0.02], handleOut: [0.05, -0.02] },
+      { pos: [1, 1], handleIn: [-0.1, 0] }
+    ]},
+    { name: 'back', points: [
+      // Back out - overshoots then settles
+      { pos: [0, 0], handleOut: [0.2, 0.8] },
+      { pos: [0.6, 1.1], handleIn: [-0.15, 0.1], handleOut: [0.15, -0.05] },
+      { pos: [1, 1], handleIn: [-0.2, 0] }
     ]},
   ];
+  
+  // Parametric easing generators
+  const [easingIntensity, setEasingIntensity] = useState(1);
+  const [easingFrequency, setEasingFrequency] = useState(3);
+  
+  const generateBounce = useCallback((intensity, frequency) => {
+    const points = [{ pos: [0, 0], handleOut: [0.1, 0] }];
+    const bounces = Math.max(1, Math.round(frequency));
+    let t = 0.36;
+    const tStep = (1 - t) / (bounces * 2);
+    
+    for (let i = 0; i < bounces; i++) {
+      const decay = Math.pow(0.5, i) * intensity;
+      // Peak at 1
+      points.push({ 
+        pos: [t, 1], 
+        handleIn: [0, 0], 
+        handleOut: [0, 0] 
+      });
+      t += tStep;
+      // Valley (except last)
+      if (i < bounces - 1) {
+        const valleyY = 1 - decay * 0.3;
+        points.push({ 
+          pos: [t, valleyY], 
+          handleIn: [-tStep * 0.3, 0], 
+          handleOut: [tStep * 0.3, 0] 
+        });
+        t += tStep;
+      }
+    }
+    points.push({ pos: [1, 1], handleIn: [0, 0] });
+    return points;
+  }, []);
+  
+  const generateElastic = useCallback((intensity, frequency) => {
+    const points = [{ pos: [0, 0], handleOut: [0.12, 0.6 * intensity] }];
+    const oscillations = Math.max(1, Math.round(frequency));
+    const segmentWidth = 0.8 / (oscillations * 2);
+    let t = 0.25;
+    
+    for (let i = 0; i < oscillations; i++) {
+      const decay = Math.pow(0.5, i) * intensity;
+      const overshoot = 1 + decay * 0.2;
+      const undershoot = 1 - decay * 0.15;
+      
+      // Overshoot
+      points.push({
+        pos: [t, overshoot],
+        handleIn: [-segmentWidth * 0.4, decay * 0.1],
+        handleOut: [segmentWidth * 0.4, -decay * 0.1]
+      });
+      t += segmentWidth;
+      
+      // Undershoot (except last)
+      if (i < oscillations - 1) {
+        points.push({
+          pos: [t, undershoot],
+          handleIn: [-segmentWidth * 0.4, -decay * 0.05],
+          handleOut: [segmentWidth * 0.4, decay * 0.05]
+        });
+        t += segmentWidth;
+      }
+    }
+    points.push({ pos: [1, 1], handleIn: [-0.1, 0] });
+    return points;
+  }, []);
+  
+  const generateBack = useCallback((intensity) => {
+    const overshoot = 1 + intensity * 0.15;
+    return [
+      { pos: [0, 0], handleOut: [0.2, 0.6 * intensity] },
+      { pos: [0.55, overshoot], handleIn: [-0.12, 0.1 * intensity], handleOut: [0.12, -0.05 * intensity] },
+      { pos: [1, 1], handleIn: [-0.2, 0] }
+    ];
+  }, []);
   
   return (
     <div style={{ marginBottom: '12px' }} ref={containerRef}>
@@ -1926,7 +2144,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
               width: SIZE,
               height: SIZE,
               borderRadius: '8px',
-              cursor: draggingRef.current !== null ? 'grabbing' : hoverItem !== null ? 'grab' : 'crosshair',
+              cursor: isScaling ? 'ew-resize' : draggingRef.current !== null ? 'grabbing' : hoverItem !== null ? 'grab' : 'crosshair',
               display: 'block',
             }}
             onMouseDown={handleMouseDown}
@@ -1944,6 +2162,40 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
         padding: '12px',
         border: `1px solid ${wrapped.border}`,
       }}>
+        {/* Scaling mode indicator */}
+        {isScaling && (
+          <div style={{
+            padding: '8px 12px',
+            background: 'rgba(100, 200, 255, 0.15)',
+            borderRadius: '6px',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '11px',
+            color: '#64c8ff',
+            textAlign: 'center',
+            border: '1px solid rgba(100, 200, 255, 0.4)',
+            marginBottom: '10px',
+          }}>
+            ⇔ <strong>SCALING</strong> · move mouse left/right · click to confirm · <span style={{ opacity: 0.7 }}>Esc</span> to cancel
+          </div>
+        )}
+        
+        {/* Selection info */}
+        {selectedPoint !== null && !isScaling && (
+          <div style={{
+            padding: '6px 10px',
+            background: 'rgba(100, 200, 255, 0.08)',
+            borderRadius: '6px',
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '10px',
+            color: '#64c8ff',
+            textAlign: 'center',
+            border: '1px solid rgba(100, 200, 255, 0.25)',
+            marginBottom: '10px',
+          }}>
+            Point {selectedPoint + 1} selected · press <strong>S</strong> to scale handles
+          </div>
+        )}
+        
         {/* Instructions */}
         <div style={{
           padding: '6px 10px',
@@ -1956,7 +2208,7 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
           border: `1px solid ${wrapped.border}`,
           marginBottom: '10px',
         }}>
-          <span style={{ color: wrapped.accent }}>drag</span> handles · <span style={{ color: wrapped.accent }}>double-click</span> add · <span style={{ color: wrapped.accent }}>right-click</span> delete
+          <span style={{ color: wrapped.accent }}>click</span> select · <span style={{ color: '#64c8ff' }}>S</span> scale handles · <span style={{ color: wrapped.accent }}>double-click</span> add · <span style={{ color: wrapped.accent }}>right-click</span> delete
         </div>
         
         {/* Preset buttons */}
@@ -2002,6 +2254,168 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
               {preset.name}
             </button>
           ))}
+          {/* Invert button */}
+          <button
+            onClick={() => {
+              const pts = localDataRef.current;
+              // Invert the curve: 1 - y for all Y values
+              const inverted = pts.map((p) => ({
+                pos: [p.pos[0], 1 - p.pos[1]],
+                // Negate handle Y offsets (flip direction)
+                handleIn: p.handleIn ? [p.handleIn[0], -p.handleIn[1]] : undefined,
+                handleOut: p.handleOut ? [p.handleOut[0], -p.handleOut[1]] : undefined,
+              }));
+              localDataRef.current = inverted;
+              onChange?.({ points: inverted });
+              setSelectedPoint(null);
+              draw();
+            }}
+            style={{
+              padding: '5px 10px',
+              background: 'rgba(100, 200, 255, 0.1)',
+              border: '1px solid rgba(100, 200, 255, 0.3)',
+              borderRadius: '5px',
+              color: '#64c8ff',
+              cursor: 'pointer',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '10px',
+              transition: 'all 0.15s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = 'rgba(100, 200, 255, 0.25)';
+              e.currentTarget.style.borderColor = '#64c8ff';
+              e.currentTarget.style.boxShadow = '0 0 8px rgba(100, 200, 255, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'rgba(100, 200, 255, 0.1)';
+              e.currentTarget.style.borderColor = 'rgba(100, 200, 255, 0.3)';
+              e.currentTarget.style.boxShadow = 'none';
+            }}
+          >
+            ↕ invert
+          </button>
+        </div>
+        
+        {/* Parametric easing controls */}
+        <div style={{
+          marginTop: '12px',
+          padding: '10px',
+          background: 'rgba(168, 85, 247, 0.05)',
+          borderRadius: '8px',
+          border: '1px solid rgba(168, 85, 247, 0.2)',
+        }}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: '10px',
+            color: '#a855f7',
+            marginBottom: '8px',
+            textAlign: 'center',
+          }}>
+            parametric easings
+          </div>
+          
+          {/* Intensity slider */}
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '9px',
+              color: wrapped.textMuted,
+              marginBottom: '4px',
+            }}>
+              <span>intensity</span>
+              <span style={{ color: '#a855f7' }}>{easingIntensity.toFixed(1)}</span>
+            </div>
+            <input
+              type="range"
+              min="0.2"
+              max="3"
+              step="0.1"
+              value={easingIntensity}
+              onChange={(e) => setEasingIntensity(parseFloat(e.target.value))}
+              style={{
+                width: '100%',
+                accentColor: '#a855f7',
+                height: '4px',
+              }}
+            />
+          </div>
+          
+          {/* Frequency slider */}
+          <div style={{ marginBottom: '10px' }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontFamily: "'JetBrains Mono', monospace",
+              fontSize: '9px',
+              color: wrapped.textMuted,
+              marginBottom: '4px',
+            }}>
+              <span>frequency</span>
+              <span style={{ color: '#a855f7' }}>{easingFrequency}</span>
+            </div>
+            <input
+              type="range"
+              min="1"
+              max="6"
+              step="1"
+              value={easingFrequency}
+              onChange={(e) => setEasingFrequency(parseInt(e.target.value))}
+              style={{
+                width: '100%',
+                accentColor: '#a855f7',
+                height: '4px',
+              }}
+            />
+          </div>
+          
+          {/* Generate buttons */}
+          <div style={{
+            display: 'flex',
+            gap: '6px',
+            justifyContent: 'center',
+          }}>
+            {[
+              { name: 'bounce', gen: () => generateBounce(easingIntensity, easingFrequency) },
+              { name: 'elastic', gen: () => generateElastic(easingIntensity, easingFrequency) },
+              { name: 'back', gen: () => generateBack(easingIntensity) },
+            ].map(({ name, gen }) => (
+              <button
+                key={name}
+                onClick={() => {
+                  const pts = gen();
+                  localDataRef.current = pts;
+                  onChange?.({ points: pts });
+                  setSelectedPoint(null);
+                  draw();
+                }}
+                style={{
+                  padding: '5px 10px',
+                  background: 'rgba(168, 85, 247, 0.15)',
+                  border: '1px solid rgba(168, 85, 247, 0.3)',
+                  borderRadius: '5px',
+                  color: '#a855f7',
+                  cursor: 'pointer',
+                  fontFamily: "'JetBrains Mono', monospace",
+                  fontSize: '10px',
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(168, 85, 247, 0.3)';
+                  e.currentTarget.style.borderColor = '#a855f7';
+                  e.currentTarget.style.boxShadow = '0 0 8px rgba(168, 85, 247, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(168, 85, 247, 0.15)';
+                  e.currentTarget.style.borderColor = 'rgba(168, 85, 247, 0.3)';
+                  e.currentTarget.style.boxShadow = 'none';
+                }}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
         </div>
         
         {/* Points info */}
@@ -2054,7 +2468,7 @@ const LoadingSpinner = () => (
 
 const DebugPanelContent = ({ initialValues, onUpdate }) => {
   const [isMinimized, setIsMinimized] = useState(false);
-  const [panelSize, setPanelSize] = useState({ width: 320, height: null }); // null = full height
+  const [panelSize, setPanelSize] = useState({ width: 380, height: null }); // null = full height
   const [copySuccess, setCopySuccess] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const valuesRef = useRef(initialValues);
