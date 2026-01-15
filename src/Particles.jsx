@@ -39,7 +39,7 @@ import {
 
 export const Particles = () => {
   const swordParticlesRef = useRef();
-  const smokeTexture = new TextureLoader().load("./smoke.png");
+  const smokeTexture = new TextureLoader().load("./2.png");
   const noiseTexture = new TextureLoader().load("./noise.png");
   const { nodes: cherryBlossomPetalNodes } = useGLTF(
     "/cherry_blossom_petal-transformed.glb"
@@ -155,7 +155,7 @@ export const Particles = () => {
 
   return (
     <group>
-      {/* <VFXParticles
+      <VFXParticles
         autoStart={true}
         maxParticles={100}
         position={[-9, 0, 0]}
@@ -184,8 +184,8 @@ export const Particles = () => {
         // intensity={10}
         // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
         // backdropNode={_distortionBackdrop}
-      /> */}
-      {/* <VFXParticles
+      />
+       <VFXParticles
         autoStart={true}
         maxParticles={1000}
         position={[-9, 0, 0]}
@@ -208,6 +208,7 @@ export const Particles = () => {
         opacityNode={({ progress }) => smoothstep(0, 0.9, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       />
+      {/*
       <VFXParticles
         autoStart={true}
         maxParticles={100}
@@ -274,26 +275,88 @@ export const Particles = () => {
         intensity={10}
       /> */}
       {/* <VFXParticles
+      debug
         autoStart={true}
         maxParticles={3000}
-        position={[3, -1, 0]}
+        position={[0, 1, 0]}
         size={[2, 2]}
         delay={3}
         colorStart={["#ffffff"]}
         fadeSize={[0.2, 1]}
         fadeOpacity={[1, 0]}
-        gravity={[0, 1, 0]}
-        lifetime={[1.5, 1.5]}
-        direction={[[-0.3, 0.3], [0.5, 1], [-0.3, 0.3]]}
-        speed={[0, 0]}
+        gravity={[0, 0, 0]}
+        lifetime={[4, 4]}
+        direction={[-1, 1]}
+        speed={[0.0001, 0.01]}
         friction={0.7}
         appearance={Appearance.GRADIENT}
         // blending={Blending.ADDITIVE}
-        intensity={10}
+        emitCount={100}
+        intensity={1}
         alphaMap={smokeTexture}
-        flipbook={{ rows: 8, columns: 8 }}
-      />
+        flipbook={{ rows: 16, columns: 16 }}
+             rotation={[
+          [0, Math.PI * 2],
+          [0, Math.PI * 2],
+          [0, Math.PI * 2],
+        ]}
+      /> */}
+      <VFXParticles
+      debug
+  geometry={new ConeGeometry(0.1, 2.9, 16, 1)}
+  maxParticles={800}
+  position={[0, 0, 0]}
+  emitCount={100}
+  delay={0.5}
+  intensity={5}
+  size={[0.1, 0.3]}
+  fadeSize={[1, 0]}
+  colorStart={["#ff0000", "#ff7b00", "#ffd500"]}
+  fadeOpacity={[1, 0]}
+  fadeOpacityCurve={{
+    points: [
+      {
+        pos: [0, 1],
+        handleOut: [0.3178994848912838, -0.6026627560301504]
+      },
+      {
+        pos: [1, 0],
+        handleIn: [-0.6853281637705365, 0.03113403190890999]
+      }
+    ]
+  }}
+  gravity={[0, 0, 0]}
+  speed={[0.04, 0.04]}
+  lifetime={[0.6, 0.6]}
+  velocityCurve={{
+    points: [
+      {
+        pos: [0, 0],
+        handleOut: [0, 0]
+      },
+      {
+        pos: [1, 1],
+        handleIn: [-0.7075999999999999, 8.66560075076667e-17]
+      }
+    ]
+  }}
+  direction={[[-1, 1], [-1, 1], [-1, 1]]}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  orientToDirection={true}
+  orientAxis="y"
+  appearance="gradient"
+  blending={2}
+  lighting="basic"
+  emitterShape={1}
+  emitterRadius={[0, 1]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
+/>
 
+{/*       <VFXParticles
       <VFXParticles
         autoStart={true}
         maxParticles={500}
@@ -422,34 +485,37 @@ export const Particles = () => {
   }}
 /> */}
 
-<VFXParticles
-debug
-  geometry={new DodecahedronGeometry(0.5, 0)}
-  position={[0, 0, 0]}
+{/* <VFXParticles
+  position={[-2.6, 0, 0]}
+  delay={0.12}
+  intensity={3.1}
   size={[0.1, 0.3]}
-  fadeSize={[1, 0]}
-  colorStart={["#ffffff"]}
-  fadeOpacity={[1, 0]}
-  gravity={[0, 0.001, 0]}
-  speed={[0, 0]}
+  fadeSize={[1, 1]}
+  colorStart={["#ff0000"]}
+  fadeOpacity={[1, 1]}
+  gravity={[0, 0.7, 0]}
+  speed={[0.01, 0.01]}
   lifetime={[1, 2]}
   friction={{
     intensity: 0,
     easing: "linear"
   }}
-  direction={[[-1, 1], [0, 1], [-1, 1]]}
-  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  direction={[[-12.5, 12.5], [-1, 1], [-1, 1]]}
+  startPosition={[[-1, 1], [-1, 1], [-1, 1]]}
   rotation={[0, 0]}
-  rotationSpeed={[0, 0]}
+  rotationSpeed={[[0.1, 2], [0.1, 2], [0.1, 1.9]]}
   appearance="gradient"
-  blending={1}
-  lighting="standard"
+  blending={2}
+  lighting="basic"
+  shadow={true}
   emitterShape={1}
   emitterRadius={[0, 1]}
   emitterAngle={0.7853981633974483}
   emitterHeight={[0, 1]}
   emitterDirection={[0, 1, 0]}
-/>
+  attractToCenter={true}
+  debug
+/> */}
 {/* <VFXParticles
 debug
   maxParticles={100}

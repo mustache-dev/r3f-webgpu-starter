@@ -2396,6 +2396,12 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
             onMouseDown={handleMouseDown}
             onContextMenu={handleContextMenu}
             onMouseLeave={handleMouseLeave}
+            onBlur={() => {
+              // Deselect when clicking elsewhere (unless in scaling/rotating mode)
+              if (!isScaling && !isRotating) {
+                setSelectedPoint(null);
+              }
+            }}
           />
         </div>
       </div>
