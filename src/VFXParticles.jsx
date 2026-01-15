@@ -1983,6 +1983,17 @@ export const VFXParticles = forwardRef(function VFXParticles(
           uniforms[`colorStart${i}`].value.setRGB(...c);
         }
       });
+      
+      // If colorEnd is disabled (null), also update colorEnd to match colorStart (no color transition)
+      const currentColorEnd = debugValuesRef.current?.colorEnd;
+      if (!currentColorEnd) {
+        uniforms.colorEndCount.value = newValues.colorStart.length;
+        startColors.forEach((c, i) => {
+          if (uniforms[`colorEnd${i}`]) {
+            uniforms[`colorEnd${i}`].value.setRGB(...c);
+          }
+        });
+      }
     }
     
     // Color End - if colorEnd is explicitly set (including null), handle it
