@@ -356,6 +356,57 @@ export const Particles = () => {
   emitterDirection={[0, 1, 0]}
 />
 
+      {/* START POSITION AS DIRECTION demo - burst/explosion effect */}
+      {/* Particles spawn in a sphere and move outward in the direction of their spawn offset */}
+      <VFXParticles
+        autoStart={true}
+        maxParticles={500}
+        position={[5, 0, 0]}
+        size={[0.1, 0.25]}
+        delay={1}
+        emitCount={100}
+        colorStart={["#ff00ff", "#00ffff", "#ffff00", "#ff6600"]}
+        colorEnd={["#660066", "#006666", "#666600", "#663300"]}
+        fadeSize={[1, 0.2]}
+        fadeOpacity={[1, 0]}
+        gravity={[0, 0, 0]}
+        lifetime={2}
+        speed={[0.01, 0.02]}
+        appearance={Appearance.CIRCULAR}
+        intensity={5}
+        blending={Blending.ADDITIVE}
+        // KEY FEATURE: spawn in a sphere, move outward in spawn direction
+        emitterShape={EmitterShape.DISK}
+        emitterRadius={[0.3, 1]}
+        startPositionAsDirection={true}
+      />
+
+      {/* Comparison: Same setup WITHOUT startPositionAsDirection */}
+      {/* This one uses random directions instead */}
+      <VFXParticles
+        autoStart={true}
+        maxParticles={500}
+        position={[-5, 0, 0]}
+        size={[0.1, 0.25]}
+        delay={1}
+        emitCount={100}
+        colorStart={["#00ff88", "#88ff00", "#00ff00"]}
+        colorEnd={["#006644", "#446600", "#004400"]}
+        fadeSize={[1, 0.2]}
+        fadeOpacity={[1, 0]}
+        gravity={[0, 0, 0]}
+        lifetime={[1.5, 2.5]}
+        speed={[0.08, 0.15]}
+        appearance={Appearance.CIRCULAR}
+        intensity={5}
+        blending={Blending.ADDITIVE}
+        // Same sphere emitter but with random directions
+        emitterShape={EmitterShape.SPHERE}
+        emitterRadius={[0.3, 1]}
+        direction={[[-1, 1], [-1, 1], [-1, 1]]}
+        // startPositionAsDirection is OFF (default) - random directions
+      />
+
 {/*       <VFXParticles
       <VFXParticles
         autoStart={true}

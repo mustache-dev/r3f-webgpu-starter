@@ -261,7 +261,7 @@ const generateVFXParticlesJSX = (values) => {
     "maxParticles", "position", "autoStart", "emitCount", "delay", "intensity",
     "size", "fadeSize", "fadeSizeCurve", "colorStart", "colorEnd", "fadeOpacity", "fadeOpacityCurve",
     "gravity", "speed", "lifetime", "friction", "velocityCurve",
-    "direction", "startPosition",
+    "direction", "startPosition", "startPositionAsDirection",
     "rotation", "rotationSpeed", "orientToDirection", "orientAxis", "stretchBySpeed",
     "appearance", "blending", "lighting", "shadow",
     "emitterShape", "emitterRadius", "emitterAngle", "emitterHeight", "emitterDirection", "emitterSurfaceOnly",
@@ -295,6 +295,9 @@ const generateVFXParticlesJSX = (values) => {
     }
     if (key === "softParticles" && value === false) continue;
     if (key === "attractToCenter" && value === false) continue;
+    if (key === "startPositionAsDirection" && value === false) continue;
+    // Skip direction if startPositionAsDirection is enabled (direction is ignored)
+    if (key === "direction" && values.startPositionAsDirection) continue;
     if (key === "emitterSurfaceOnly" && value === false) continue;
     
     // Skip softDistance if softParticles is false
@@ -3180,7 +3183,7 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
     'Size': ['size', 'range', 'fade', 'scale'],
     'Colors': ['color', 'colors', 'start', 'end', 'opacity', 'fade', 'intensity', 'rgb', 'hex'],
     'Physics': ['physics', 'gravity', 'speed', 'lifetime', 'velocity', 'friction', 'curve'],
-    'Direction & Start Position': ['direction', 'position', 'offset', 'start'],
+    'Direction & Start Position': ['direction', 'position', 'offset', 'start', 'startPositionAsDirection'],
     'Rotation': ['rotation', 'rotate', 'spin', 'orient', 'stretch', 'axis'],
     'Geometry': ['geometry', 'mesh', 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'capsule'],
     'Rendering': ['rendering', 'appearance', 'blending', 'lighting', 'shadow', 'material'],
@@ -3551,7 +3554,14 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
 
           {/* Direction & Position */}
           <Section title="Direction & Start Position" defaultOpen={false} hidden={!matchesSearch('Direction & Start Position')}>
-            <Range3DInput label="Direction (XYZ ranges)" value={values.direction} onChange={(v) => update("direction", v)} />
+            <CheckboxInput
+              label="Start Position as Direction"
+              value={values.startPositionAsDirection}
+              onChange={(v) => update("startPositionAsDirection", v)}
+            />
+            {!values.startPositionAsDirection && (
+              <Range3DInput label="Direction (XYZ ranges)" value={values.direction} onChange={(v) => update("direction", v)} />
+            )}
             <Range3DInput
               label="Start Position Offset (XYZ)"
               value={values.startPosition}

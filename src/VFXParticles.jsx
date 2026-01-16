@@ -330,6 +330,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Simple attract to center - particles move from spawn position to center over lifetime
     // Overrides speed/direction - lifetime controls how long it takes to reach center
     attractToCenter = false,
+    // Use start position offset as direction - particles move in the direction of their spawn offset
+    startPositionAsDirection = false,
     // Soft particles - fade when intersecting scene geometry
     softParticles = false,
     softDistance = 0.5, // Distance in world units over which to fade
@@ -562,6 +564,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       attractor3Axis: uniform(new THREE.Vector3(0, 1, 0)),
       // Simple attract to center
       attractToCenter: uniform(attractToCenter ? 1 : 0),
+      // Use start position as direction
+      startPositionAsDirection: uniform(startPositionAsDirection ? 1 : 0),
       // Soft particles
       softParticlesEnabled: uniform(softParticles ? 1 : 0),
       softDistance: uniform(softDistance),
@@ -695,6 +699,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Simple attract to center
     uniforms.attractToCenter.value = attractToCenter ? 1 : 0;
     
+    // Start position as direction
+    uniforms.startPositionAsDirection.value = startPositionAsDirection ? 1 : 0;
+    
     // Soft particles
     uniforms.softParticlesEnabled.value = softParticles ? 1 : 0;
     uniforms.softDistance.value = softDistance;
@@ -722,7 +729,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     speedRange, lifetimeRange, direction3D, rotation3D, rotationSpeed3D,
     intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms, collision,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPosition3D, attractors, attractToCenter, softParticles, softDistance, velocityCurve, orientAxis, stretchBySpeed
+    turbulence, startPosition3D, attractors, attractToCenter, startPositionAsDirection, softParticles, softDistance, velocityCurve, orientAxis, stretchBySpeed
   ]);
 
   // GPU Storage arrays
@@ -960,13 +967,24 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // This makes particles reach center exactly when they die
         const attractVelocity = shapeOffset.negate().mul(randomFade).div(60);
         
-        // Normal velocity: random direction * speed
+        // Normal velocity: random direction * speed OR start position as direction
+        const useStartPosAsDir = uniforms.startPositionAsDirection.greaterThan(0.5);
+        
+        // Random direction (default behavior)
         const dirX = mix(uniforms.dirMinX, uniforms.dirMaxX, randDirX);
         const dirY = mix(uniforms.dirMinY, uniforms.dirMaxY, randDirY);
         const dirZ = mix(uniforms.dirMinZ, uniforms.dirMaxZ, randDirZ);
-        const dirVec = vec3(dirX, dirY, dirZ);
-        const dirLength = dirVec.length();
-        const dir = dirLength.greaterThan(0.001).select(dirVec.div(dirLength), vec3(0, 0, 0));
+        const randomDirVec = vec3(dirX, dirY, dirZ);
+        const randomDirLength = randomDirVec.length();
+        const randomDir = randomDirLength.greaterThan(0.001).select(randomDirVec.div(randomDirLength), vec3(0, 0, 0));
+        
+        // Start position as direction (normalized shapeOffset)
+        const startPosLength = shapeOffset.length();
+        const startPosDir = startPosLength.greaterThan(0.001).select(shapeOffset.div(startPosLength), vec3(0, 0, 0));
+        
+        // Select direction based on mode
+        const dir = useStartPosAsDir.select(startPosDir, randomDir);
+        
         const randomSpeed = mix(uniforms.speedMin, uniforms.speedMax, randSpeed);
         const normalVelocity = dir.mul(randomSpeed);
         
@@ -2052,6 +2070,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
       uniforms.attractToCenter.value = newValues.attractToCenter ? 1 : 0;
     }
     
+    // Start position as direction
+    if ('startPositionAsDirection' in newValues) {
+      uniforms.startPositionAsDirection.value = newValues.startPositionAsDirection ? 1 : 0;
+    }
+    
     // Soft particles
     if ('softParticles' in newValues) {
       uniforms.softParticlesEnabled.value = newValues.softParticles ? 1 : 0;
@@ -2162,6 +2185,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       lifetime,
       direction,
       startPosition,
+      startPositionAsDirection,
       speed,
       friction,
       appearance,
