@@ -8,7 +8,8 @@ import {
   RepeatWrapping,
   LinearFilter,
   ConeGeometry,
-  DodecahedronGeometry
+  DodecahedronGeometry,
+  Color
 } from "three/webgpu";
 import { useGLTF } from "@react-three/drei";
 import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -28,6 +29,7 @@ import {
   normalGeometry,
   clamp,
   positionWorld,
+  positionLocal,
   sin,
   PI,
   normalize,
@@ -35,6 +37,12 @@ import {
   smoothstep,
   vec4,
   reflector,
+  texture,
+  positionView,
+  uniform,
+  mul,
+  If,
+  Discard,
 } from "three/tsl";
 
 export const Particles = () => {
@@ -96,112 +104,72 @@ export const Particles = () => {
 
     return vec3(r, g, b);
   };
+  const triplanar = ({ position, normal, scale = 1.0, map }) => {
+    const pos = position.mul(scale);
+    const n = abs(normal);
+    
+    // Blend weights (raised to power for sharper blending)
+    const weights = pow(n, vec3(4.0));
+    const blend = weights.div(weights.x.add(weights.y).add(weights.z));
+    
+    // Sample texture from 3 projections
+    const texX = texture(map, pos.yz);
+    const texY = texture(map, pos.xz);
+    const texZ = texture(map, pos.xy);
+    
+    // Weighted blend
+    return texX.mul(blend.x).add(texY.mul(blend.y)).add(texZ.mul(blend.z));
+  };
 
-  const stylizedSphereBackdrop = useMemo(() => {
+  const stylizedSphereBackdrop = ({progress}) => {
     // Fresnel: 0 at center, 1 at edges (inverted from before)
 
-    const normalTarget = vec3(0, 1, 0);
-    const n = normalGeometry;
-    const nDot = dot(n, normalTarget);
-    const nDotClamped = clamp(nDot, 0, 1);
+    // const normalTarget = vec3(0, 1, 0);
+    // const n = normalGeometry;
+    // const nDot = dot(n, normalTarget);
+    // const nDotClamped = clamp(nDot, 0, 1);
 
-    const color1 = vec3(0, 0, 0.05);
-    const color2 = vec3(0.01, 0.01, 0.1);
-    const color = mix(color1, color2, nDotClamped);
-    const fresnelBase = abs(dot(normalView, positionViewDirection));
-    const fresnel = pow(float(1).sub(fresnelBase), float(4.0)); // Inverted & squared for edge glow
+    // const color1 = vec3(0, 0, 0.05);
+    // const color2 = vec3(0.01, 0.01, 0.1);
+    // const color = mix(color1, color2, nDotClamped);
+    // const fresnelBase = abs(dot(normalView, positionViewDirection));
+    // const fresnel = pow(float(1).sub(fresnelBase), float(4.0)); // Inverted & squared for edge glow
 
-    // Purple-blue gradient colors
-    const purple = vec3(0.6, 0.1, 0.9); // Vibrant purple
-    const blue = vec3(0.1, 0.4, 1.0); // Bright blue
+    // // Purple-blue gradient colors
+    // const purple = vec3(0.6, 0.1, 0.9); // Vibrant purple
+    // const blue = vec3(0.1, 0.4, 1.0); // Bright blue
 
-    // Smooth scroll using sine wave (no hard edges)
-    // sin goes -1 to 1, remap to 0-1 with * 0.5 + 0.5
-    const scrollSpeed = float(0.8);
-    const frequency = float(1.0); // How many waves across the surface
-    const wave = sin(
-      positionWorld.y.mul(frequency).sub(time.mul(scrollSpeed)).mul(PI)
-    );
-    const scrollOffset = wave.mul(0.5).add(0.5); // Remap -1,1 to 0,1
+    // // Smooth scroll using sine wave (no hard edges)
+    // // sin goes -1 to 1, remap to 0-1 with * 0.5 + 0.5
+    // const scrollSpeed = float(0.8);
+    // const frequency = float(1.0); // How many waves across the surface
+    // const wave = sin(
+    //   positionWorld.y.mul(frequency).sub(time.mul(scrollSpeed)).mul(PI)
+    // );
+    // const scrollOffset = wave.mul(0.5).add(0.5); // Remap -1,1 to 0,1
 
-    // Mix purple to blue based on scroll position
-    const purpleBlueGlow = mix(purple, blue, scrollOffset);
+    // // Mix purple to blue based on scroll position
+    // const purpleBlueGlow = mix(purple, blue, scrollOffset);
 
-    // Multiply by fresnel to only show at edges
-    const finalColor = mix(color, purpleBlueGlow.mul(4), fresnel); // Boost intensity
+    // // Multiply by fresnel to only show at edges
+    // const finalColor = mix(color, purpleBlueGlow.mul(4), fresnel); // Boost intensity
+
+    const color = texture(noiseTexture, positionLocal.xy.sub(time))
+
+    Discard(progress.greaterThanEqual(0.3));
+    
+    
+    const finalColor = vec4(vec3(progress), 1.);
 
     return finalColor;
-  }, []);
+  };
 
   // Spawn swords at 4 uniform positions, all emitting in the same direction
   const spawnAccumulator = useRef(0);
-  useFrame((state, delta) => {
-    if (!swordParticlesRef.current) return;
-    
-    spawnAccumulator.current += delta;
-    if (spawnAccumulator.current < 2) return; // Spawn every 0.5 seconds
-    spawnAccumulator.current = 0;
-    
-    const count = 25;
 
-    const  offset = 10
-    
-    // 4 positions in a square pattern, all shooting toward center (0, 0, 0)
-    // swordParticlesRef.current.spawn(-offset, 0, -offset, count, { direction: [[1, 1], [0, 0], [1, 1]], });   // → toward +X, +Z
-    // swordParticlesRef.current.spawn(offset, 0, -offset, count, { direction: [[-1, -1], [0, 0], [1, 1]], });  // → toward -X, +Z
-    // swordParticlesRef.current.spawn(-offset, 0, offset, count, { direction: [[1, 1], [0, 0], [-1, -1]], });  // → toward +X, -Z
-    // swordParticlesRef.current.spawn(offset, 0, offset, count, { direction: [[-1, -1], [0, 0], [-1, -1]], }); // → toward -X, -Z
-  });
 
   return (
     <group>
-<VFXParticles
-debug
-  geometry={new BoxGeometry(1, 1, 1, 1, 1, 1)}
-  maxParticles={100}
-  position={[0, 0, 0]}
-  delay={0.5}
-  size={[0.29, 0.29]}
-  fadeSize={[1, 1]}
-  colorStart={["#ffffff"]}
-  fadeOpacity={[1, 0]}
-  gravity={[0, 0, 0]}
-  speed={[10, 10]}
-  lifetime={[1, 2]}
-  velocityCurve={{
-    points: [
-      {
-        pos: [0, 0],
-        handleOut: [0.9717337280273439, 0.004709008789062502]
-      },
-      {
-        pos: [1, 1],
-        handleIn: [-0.06904875974416833, -0.3226953188036544]
-      }
-    ]
-  }}
-  direction={[[0, 0], [-1, -1], [0, 0]]}
-  startPosition={[[0, 0], [0, 0], [0, 0]]}
-  rotation={[0, 0]}
-  rotationSpeed={[0, 0]}
-  appearance="gradient"
-  blending={1}
-  lighting="standard"
-  emitterShape={1}
-  emitterRadius={[0, 1]}
-  emitterAngle={0.7853981633974483}
-  emitterHeight={[0, 1]}
-  emitterDirection={[0, 1, 0]}
-  collision={{
-    plane: {
-      y: -1
-    },
-    bounce: 0,
-    friction: 0.8,
-    die: false,
-    sizeBasedGravity: 0
-  }}
-/>
       {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
@@ -279,29 +247,30 @@ debug
         opacityNode={({ progress }) => smoothstep(0, 0.1, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
-       {/* <VFXParticles
+        <VFXParticles
         autoStart={true}
-        maxParticles={1090}
-        position={[-6, 0, 0]}
+        maxParticles={10}
+        position={[0, 0, 0]}
+        delay={3}
         geometry={new SphereGeometry(1, 32, 32)}
         size={0.5}
-        delay={0.3}
+        delay={3}
         colorStart={["#ffdd44", "#ffaa00", "#ff6600"]}
         colorEnd={["#442200", "#221100"]}
         fadeSize={1}
         fadeOpacity={[1, 1]}
         gravity={[0, 0, 0]}
-        lifetime={[2, 4]}
+        lifetime={[3, 3]}
         direction={[[-1, 1], [-1, 1], [-1, 1]]}
         startPosition={0}
-        speed={0.01}
+        speed={0.0}
         // friction={0.8}
         shadow={true}
         // orientToDirection={true}
         // intensity={10}
-        colorNode={stylizedSphereBackdrop}
+        colorNode={({progress}) => stylizedSphereBackdrop(({progress}))}
         castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.)}
-      /> */}
+      /> 
       {/*
       <VFXParticles
         autoStart={true}

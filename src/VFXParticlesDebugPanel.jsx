@@ -48,6 +48,55 @@ const geometryDefaults = {
   [GeometryType.CAPSULE]: { radius: 0.25, length: 0.5, capSegments: 4, radialSegments: 8 },
 };
 
+// Default values for VFXParticles props (used by reset button)
+export const DEFAULT_VALUES = Object.freeze({
+  maxParticles: 10000,
+  size: [0.1, 0.3],
+  colorStart: ["#ffffff"],
+  colorEnd: null,
+  fadeSize: [1, 0],
+  fadeSizeCurve: null,
+  fadeOpacity: [1, 0],
+  fadeOpacityCurve: null,
+  velocityCurve: null,
+  gravity: [0, 0, 0],
+  lifetime: [1, 2],
+  direction: [[-1, 1], [0, 1], [-1, 1]],
+  startPosition: [[0, 0], [0, 0], [0, 0]],
+  speed: [0.1, 0.1],
+  friction: { intensity: 0, easing: 'linear' },
+  appearance: Appearance.GRADIENT,
+  rotation: [[0, 0], [0, 0], [0, 0]],
+  rotationSpeed: [[0, 0], [0, 0], [0, 0]],
+  rotationSpeedCurve: null,
+  geometryType: GeometryType.NONE,
+  geometryArgs: null,
+  orientToDirection: false,
+  orientAxis: "z",
+  stretchBySpeed: null,
+  lighting: Lighting.STANDARD,
+  shadow: false,
+  blending: Blending.NORMAL,
+  intensity: 1,
+  position: [0, 0, 0],
+  autoStart: true,
+  delay: 0,
+  emitCount: 1,
+  emitterShape: EmitterShape.BOX,
+  emitterRadius: [0, 1],
+  emitterAngle: Math.PI / 4,
+  emitterHeight: [0, 1],
+  emitterSurfaceOnly: false,
+  emitterDirection: [0, 1, 0],
+  turbulence: null,
+  attractors: null,
+  attractToCenter: false,
+  startPositionAsDirection: false,
+  softParticles: false,
+  softDistance: 0.5,
+  collision: null,
+});
+
 // Create geometry from type and args
 export const createGeometry = (type, args = {}) => {
   if (type === GeometryType.NONE || !type) return null;
@@ -3059,6 +3108,37 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < historyLength - 1;
 
+  // Reset to default values (not initial - the actual component defaults)
+  const resetToDefaults = useCallback(() => {
+    isUndoingRef.current = true;
+    const defaultState = JSON.parse(JSON.stringify(DEFAULT_VALUES));
+    valuesRef.current = defaultState;
+    
+    // Mark all keys as dirty and flush
+    for (const key in defaultState) {
+      dirtyKeysRef.current.add(key);
+    }
+    flushChanges();
+    
+    // Record this reset in history
+    historyRef.current = historyRef.current.slice(0, historyIndex + 1);
+    historyRef.current.push(defaultState);
+    const newLength = historyRef.current.length;
+    const newIndex = newLength - 1;
+    
+    if (newLength > MAX_HISTORY) {
+      historyRef.current.shift();
+      setHistoryIndex(newIndex - 1);
+      setHistoryLength(newLength - 1);
+    } else {
+      setHistoryIndex(newIndex);
+      setHistoryLength(newLength);
+    }
+    
+    forceUpdate(n => n + 1);
+    setTimeout(() => { isUndoingRef.current = false; }, 50);
+  }, [flushChanges, historyIndex]);
+
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -3256,6 +3336,16 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
             title="Redo (Ctrl+Y)"
           >
             ↷
+          </button>
+          <button
+            style={{
+              ...styles.iconBtn,
+              marginLeft: '4px',
+            }}
+            onClick={resetToDefaults}
+            title="Reset to defaults"
+          >
+            ⟲
           </button>
           {hasPendingChanges && <LoadingSpinner />}
           <button 

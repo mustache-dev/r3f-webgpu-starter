@@ -315,6 +315,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     backdropNode = null, // TSL node or function for backdrop sampling
     opacityNode = null,  // TSL node or function for custom opacity control
     colorNode = null,    // TSL node or function to override color (receives particleData, should return vec4)
+    alphaTestNode = null, // TSL node or function for custom alpha test/discard (return true to discard fragment)
     castShadowNode = null,   // TSL node or function for shadow map output (what shadow the particle casts)
     emitCount = 1,
     // Emitter shape props
@@ -1582,6 +1583,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
           : castShadowNode;
       }
       
+      // Apply custom alpha test node if provided (for discard logic)
+      if (alphaTestNode) {
+        mat.alphaTestNode = typeof alphaTestNode === 'function'
+          ? alphaTestNode(particleData)
+          : alphaTestNode;
+      }
+      
       return mat;
     } else {
       // Sprite mode (default) - uses Y rotation only for 2D sprites
@@ -1615,9 +1623,16 @@ export const VFXParticles = forwardRef(function VFXParticles(
           : castShadowNode;
       }
       
+      // Apply custom alpha test node if provided (for discard logic)
+      if (alphaTestNode) {
+        mat.alphaTestNode = typeof alphaTestNode === 'function'
+          ? alphaTestNode(particleData)
+          : alphaTestNode;
+      }
+      
       return mat;
     }
-  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, activeAppearance, alphaMap, flipbook, blending, activeGeometry, activeOrientToDirection, activeLighting, backdropNode, opacityNode, colorNode, castShadowNode, softParticles, curveTexture]);
+  }, [positions, velocities, lifetimes, particleSizes, particleRotations, particleColorStarts, particleColorEnds, uniforms, activeAppearance, alphaMap, flipbook, blending, activeGeometry, activeOrientToDirection, activeLighting, backdropNode, opacityNode, colorNode, alphaTestNode, castShadowNode, softParticles, curveTexture]);
 
   // Create sprite or instanced mesh based on geometry prop
   const renderObject = useMemo(() => {
