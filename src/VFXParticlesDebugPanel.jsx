@@ -262,7 +262,7 @@ const generateVFXParticlesJSX = (values) => {
     "size", "fadeSize", "fadeSizeCurve", "colorStart", "colorEnd", "fadeOpacity", "fadeOpacityCurve",
     "gravity", "speed", "lifetime", "friction", "velocityCurve",
     "direction", "startPosition", "startPositionAsDirection",
-    "rotation", "rotationSpeed", "orientToDirection", "orientAxis", "stretchBySpeed",
+    "rotation", "rotationSpeed", "rotationSpeedCurve", "orientToDirection", "orientAxis", "stretchBySpeed",
     "appearance", "blending", "lighting", "shadow",
     "emitterShape", "emitterRadius", "emitterAngle", "emitterHeight", "emitterDirection", "emitterSurfaceOnly",
     "turbulence", "collision", "softParticles", "softDistance", "attractToCenter"
@@ -2134,10 +2134,8 @@ const EasingCurveEditor = ({ value, onChange, label = "Easing Curve" }) => {
     const hit = hitTest(mx, my);
     
     if (hit) {
-      // Select point on click
-      if (hit.type === 'point') {
-        setSelectedPoint(hit.index);
-      }
+      // Select the point (clicking point or its handles selects that point)
+      setSelectedPoint(hit.index);
       
       draggingRef.current = hit;
       document.body.style.cursor = 'grabbing';
@@ -3179,12 +3177,11 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
   // Search filter helper - maps section titles to their searchable keywords
   const sectionKeywords = {
     'Basic': ['basic', 'max particles', 'position', 'emit', 'count', 'delay', 'auto start'],
-    'Easing Curve (Test)': ['easing', 'curve', 'test'],
     'Size': ['size', 'range', 'fade', 'scale'],
     'Colors': ['color', 'colors', 'start', 'end', 'opacity', 'fade', 'intensity', 'rgb', 'hex'],
     'Physics': ['physics', 'gravity', 'speed', 'lifetime', 'velocity', 'friction', 'curve'],
     'Direction & Start Position': ['direction', 'position', 'offset', 'start', 'startPositionAsDirection'],
-    'Rotation': ['rotation', 'rotate', 'spin', 'orient', 'stretch', 'axis'],
+    'Rotation': ['rotation', 'rotate', 'spin', 'orient', 'stretch', 'axis', 'curve', 'rotationSpeedCurve'],
     'Geometry': ['geometry', 'mesh', 'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane', 'capsule'],
     'Rendering': ['rendering', 'appearance', 'blending', 'lighting', 'shadow', 'material'],
     'Emitter Shape': ['emitter', 'shape', 'radius', 'angle', 'height', 'direction', 'surface'],
@@ -3387,15 +3384,6 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
             <CheckboxInput label="Auto Start" value={values.autoStart} onChange={(v) => update("autoStart", v)} />
           </Section>
 
-          {/* Easing Curve Test */}
-          <Section title="Easing Curve (Test)" defaultOpen={false} hidden={!matchesSearch('Easing Curve (Test)')}>
-            <EasingCurveEditor
-              label=""
-              value={values.easingCurve}
-              onChange={(v) => update("easingCurve", v)}
-            />
-          </Section>
-
           {/* Size */}
           <Section title="Size" defaultOpen={false} hidden={!matchesSearch('Size')}>
             <RangeInput
@@ -3577,6 +3565,27 @@ const DebugPanelContent = ({ initialValues, onUpdate }) => {
               value={values.rotationSpeed}
               onChange={(v) => update("rotationSpeed", v)}
             />
+            <div style={styles.row}>
+              <label style={styles.label}>Use Rotation Speed Curve</label>
+              <input
+                type="checkbox"
+                checked={!!values.rotationSpeedCurve}
+                onChange={(e) => update("rotationSpeedCurve", e.target.checked ? {
+                  points: [
+                    { pos: [0, 1], handleOut: [0.33, 0] },
+                    { pos: [1, 0], handleIn: [-0.33, 0] }
+                  ]
+                } : null)}
+                style={{ accentColor: wrapped.accent }}
+              />
+            </div>
+            {values.rotationSpeedCurve && (
+              <EasingCurveEditor
+                label="Rotation Speed over Lifetime (1=full, 0=stopped)"
+                value={values.rotationSpeedCurve}
+                onChange={(v) => update("rotationSpeedCurve", v)}
+              />
+            )}
             <CheckboxInput
               label="Orient to Direction"
               value={values.orientToDirection}

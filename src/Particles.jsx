@@ -301,9 +301,8 @@ export const Particles = () => {
           [0, Math.PI * 2],
         ]}
       /> */}
-      <VFXParticles
-      debug
-  geometry={new ConeGeometry(0.1, 2.9, 16, 1)}
+<VFXParticles
+  geometry={new BoxGeometry(1.1, 1.1, 9.8, 1, 1, 1)}
   maxParticles={800}
   position={[0, 0, 0]}
   emitCount={100}
@@ -326,7 +325,7 @@ export const Particles = () => {
     ]
   }}
   gravity={[0, 0, 0]}
-  speed={[0.04, 0.04]}
+  speed={[1.2, 1.2]}
   lifetime={[0.6, 0.6]}
   velocityCurve={{
     points: [
@@ -336,16 +335,26 @@ export const Particles = () => {
       },
       {
         pos: [1, 1],
-        handleIn: [-0.7075999999999999, 8.66560075076667e-17]
+        handleIn: [-0.9768463134765625, 0.004474334716796813]
       }
     ]
   }}
-  direction={[[-1, 1], [-1, 1], [-1, 1]]}
-  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  startPosition={[[-1, 1], [-1, 1], [-1, 1]]}
+  startPositionAsDirection={true}
   rotation={[0, 0]}
-  rotationSpeed={[0, 0]}
-  orientToDirection={true}
-  orientAxis="y"
+  rotationSpeed={[[-20, 20], [-20, 20], [-20, 20]]}
+  rotationSpeedCurve={{
+    points: [
+      {
+        pos: [0, 1],
+        handleOut: [0.016755580028081127, -0.32957434751194237]
+      },
+      {
+        pos: [1, 0],
+        handleIn: [-0.6132060000000001, 7.509607651179521e-17]
+      }
+    ]
+  }}
   appearance="gradient"
   blending={2}
   lighting="basic"
@@ -355,7 +364,6 @@ export const Particles = () => {
   emitterHeight={[0, 1]}
   emitterDirection={[0, 1, 0]}
 />
-
       {/* START POSITION AS DIRECTION demo - burst/explosion effect */}
       {/* Particles spawn in a sphere and move outward in the direction of their spawn offset */}
       <VFXParticles
@@ -369,9 +377,9 @@ export const Particles = () => {
         colorEnd={["#660066", "#006666", "#666600", "#663300"]}
         fadeSize={[1, 0.2]}
         fadeOpacity={[1, 0]}
-        gravity={[0, 0, 0]}
+        gravity={[0, -2, 0]}
         lifetime={2}
-        speed={[0.01, 0.02]}
+        speed={[0.01, 1]}
         appearance={Appearance.CIRCULAR}
         intensity={5}
         blending={Blending.ADDITIVE}
@@ -396,7 +404,7 @@ export const Particles = () => {
         fadeOpacity={[1, 0]}
         gravity={[0, 0, 0]}
         lifetime={[1.5, 2.5]}
-        speed={[0.08, 0.15]}
+        speed={[0.08, 1.15]}
         appearance={Appearance.CIRCULAR}
         intensity={5}
         blending={Blending.ADDITIVE}

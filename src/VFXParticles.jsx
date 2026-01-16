@@ -222,18 +222,19 @@ export const bakeCurveToArray = (curveData, resolution = CURVE_RESOLUTION) => {
 };
 
 // Create a combined DataTexture from multiple curve data
-// R = size curve, G = opacity curve, B = velocity curve
-export const createCombinedCurveTexture = (sizeCurve, opacityCurve, velocityCurve) => {
+// R = size curve, G = opacity curve, B = velocity curve, A = rotation speed curve
+export const createCombinedCurveTexture = (sizeCurve, opacityCurve, velocityCurve, rotationSpeedCurve) => {
   const sizeData = bakeCurveToArray(sizeCurve);
   const opacityData = bakeCurveToArray(opacityCurve);
   const velocityData = bakeCurveToArray(velocityCurve);
-  
+  const rotationSpeedData = bakeCurveToArray(rotationSpeedCurve);
+
   const rgba = new Float32Array(CURVE_RESOLUTION * 4);
   for (let i = 0; i < CURVE_RESOLUTION; i++) {
-    rgba[i * 4] = sizeData[i];       // R - size easing
-    rgba[i * 4 + 1] = opacityData[i]; // G - opacity easing
-    rgba[i * 4 + 2] = velocityData[i]; // B - velocity easing
-    rgba[i * 4 + 3] = 1;              // A
+    rgba[i * 4] = sizeData[i];           // R - size easing
+    rgba[i * 4 + 1] = opacityData[i];    // G - opacity easing
+    rgba[i * 4 + 2] = velocityData[i];   // B - velocity easing
+    rgba[i * 4 + 3] = rotationSpeedData[i]; // A - rotation speed easing
   }
   
   const tex = new THREE.DataTexture(rgba, CURVE_RESOLUTION, 1, THREE.RGBAFormat, THREE.FloatType);
@@ -287,7 +288,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     fadeOpacity = [1, 0],
     fadeOpacityCurve = null, // Curve data { points: [...] } - controls fadeOpacity over lifetime (overrides fadeOpacity if set)
     velocityCurve = null, // Curve data { points: [...] } - controls velocity/speed over lifetime (overrides friction if set)
-    gravity = [0, 0.001, 0],
+    gravity = [0, 0, 0],
     lifetime = [1, 2],
     direction = [[-1, 1], [0, 1], [-1, 1]], // [[minX, maxX], [minY, maxY], [minZ, maxZ]] or [min, max] for all axes
     startPosition = [[0, 0], [0, 0], [0, 0]], // [[minX, maxX], [minY, maxY], [minZ, maxZ]] offset from spawn position
@@ -299,6 +300,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     flipbook = null, // { rows: 4, columns: 8 }
     rotation = [0, 0], // [min, max] in radians
     rotationSpeed = [0, 0], // [min, max] rotation speed in radians/second
+    rotationSpeedCurve = null, // Curve data { points: [...] } - controls rotation speed over lifetime
     geometry = null, // Custom geometry (e.g. new THREE.SphereGeometry(0.5, 8, 8))
     orientToDirection = false, // Rotate geometry to face velocity direction (geometry mode only)
     orientAxis = "z", // Which local axis aligns with velocity: "x", "y", "z", "-x", "-y", "-z"
@@ -365,6 +367,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const [activeFadeSizeCurve, setActiveFadeSizeCurve] = useState(fadeSizeCurve);
   const [activeFadeOpacityCurve, setActiveFadeOpacityCurve] = useState(fadeOpacityCurve);
   const [activeVelocityCurve, setActiveVelocityCurve] = useState(velocityCurve);
+  const [activeRotationSpeedCurve, setActiveRotationSpeedCurve] = useState(rotationSpeedCurve);
   
   // Keep refs in sync with props (when not in debug mode)
   useEffect(() => {
@@ -385,8 +388,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
       setActiveFadeSizeCurve(fadeSizeCurve);
       setActiveFadeOpacityCurve(fadeOpacityCurve);
       setActiveVelocityCurve(velocityCurve);
+      setActiveRotationSpeedCurve(rotationSpeedCurve);
     }
-  }, [debug, maxParticles, lighting, appearance, orientToDirection, geometry, shadow, fadeSizeCurve, fadeOpacityCurve, velocityCurve]);
+  }, [debug, maxParticles, lighting, appearance, orientToDirection, geometry, shadow, fadeSizeCurve, fadeOpacityCurve, velocityCurve, rotationSpeedCurve]);
 
   // Convert lifetime in seconds to fade rate per second (framerate independent)
   const lifetimeToFadeRate = (seconds) => 1 / seconds;
@@ -398,10 +402,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
   const fadeOpacityRange = useMemo(() => toRange(fadeOpacity, [1, 0]), [fadeOpacity]);
   
   // Create combined curve texture for GPU sampling (use active curves for debug mode)
-  // R = size, G = opacity, B = velocity
+  // R = size, G = opacity, B = velocity, A = rotation speed
   const curveTexture = useMemo(() => {
-    return createCombinedCurveTexture(activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve);
-  }, [activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve]);
+    return createCombinedCurveTexture(activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve, activeRotationSpeedCurve);
+  }, [activeFadeSizeCurve, activeFadeOpacityCurve, activeVelocityCurve, activeRotationSpeedCurve]);
   
   // Dispose curve texture when it changes or component unmounts
   const prevCurveTextureRef = useRef(null);
@@ -473,7 +477,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       speedMax: uniform(speedRange[1]),
       lifetimeMin: uniform(lifetimeToFadeRate(lifetimeRange[1])),
       lifetimeMax: uniform(lifetimeToFadeRate(lifetimeRange[0])),
-      deltaTime: uniform(1/60), // Will be updated each frame
+      deltaTime: uniform(0.016), // Will be updated each frame
       // 3D direction ranges
       dirMinX: uniform(direction3D[0][0]),
       dirMaxX: uniform(direction3D[0][1]),
@@ -571,6 +575,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
       softDistance: uniform(softDistance),
       // Velocity curve (replaces friction when enabled)
       velocityCurveEnabled: uniform(velocityCurve ? 1 : 0),
+      // Rotation speed curve (modulates rotation speed over lifetime)
+      rotationSpeedCurveEnabled: uniform(rotationSpeedCurve ? 1 : 0),
       // Orient axis: 0=+X, 1=+Y, 2=+Z, 3=-X, 4=-Y, 5=-Z
       orientAxisType: uniform(axisToNumber(orientAxis)),
       // Stretch by speed (uses effective velocity after curve modifier)
@@ -709,6 +715,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Velocity curve (when enabled, overrides friction)
     uniforms.velocityCurveEnabled.value = velocityCurve ? 1 : 0;
     
+    // Rotation speed curve
+    uniforms.rotationSpeedCurveEnabled.value = rotationSpeedCurve ? 1 : 0;
+
     // Orient axis
     uniforms.orientAxisType.value = axisToNumber(orientAxis);
     
@@ -729,7 +738,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
     speedRange, lifetimeRange, direction3D, rotation3D, rotationSpeed3D,
     intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms, collision,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPosition3D, attractors, attractToCenter, startPositionAsDirection, softParticles, softDistance, velocityCurve, orientAxis, stretchBySpeed
+    turbulence, startPosition3D, attractors, attractToCenter, startPositionAsDirection, softParticles, softDistance, velocityCurve, rotationSpeedCurve, orientAxis, stretchBySpeed
   ]);
 
   // GPU Storage arrays
@@ -963,9 +972,9 @@ export const VFXParticles = forwardRef(function VFXParticles(
         // Velocity calculation
         const useAttractToCenter = uniforms.attractToCenter.greaterThan(0.5);
         
-        // AttractToCenter: velocity = -shapeOffset * fadeRate / 60
-        // This makes particles reach center exactly when they die
-        const attractVelocity = shapeOffset.negate().mul(randomFade).div(60);
+        // AttractToCenter: velocity = -shapeOffset * fadeRate
+        // This makes particles reach center exactly when they die (velocity in units/sec)
+        const attractVelocity = shapeOffset.negate().mul(randomFade);
         
         // Normal velocity: random direction * speed OR start position as direction
         const useStartPosAsDir = uniforms.startPositionAsDirection.greaterThan(0.5);
@@ -1033,15 +1042,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
       const fadeRate = fadeRates.element(instanceIndex);
       const particleRotation = particleRotations.element(instanceIndex);
       const particleSize = particleSizes.element(instanceIndex);
-      // Normalized delta: 1.0 at 60fps, 0.5 at 120fps, 2.0 at 30fps
-      const dt60 = uniforms.deltaTime.mul(60);
+      const dt = uniforms.deltaTime;
 
       If(lifetime.greaterThan(0), () => {
-        // All operations scaled by dt60 for framerate independence
-        // Gravity scaled down by 0.02 for more intuitive values (0.05 prop ≈ 0.001 internal)
+        // All operations use deltaTime for framerate independence
         // Size-based gravity: gravity * (1 + size * sizeBasedGravity)
         const gravityMultiplier = float(1).add(particleSize.mul(uniforms.sizeBasedGravity));
-        velocity.addAssign(uniforms.gravity.mul(dt60).mul(0.001).mul(gravityMultiplier));
+        velocity.addAssign(uniforms.gravity.mul(dt).mul(gravityMultiplier));
         
         // Velocity control: either via curve texture or friction
         // Calculate particle progress (0 at birth, 1 at death)
@@ -1189,8 +1196,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
           );
         });
         
-        // Apply velocity to position, scaled by friction (throttle, not destructive)
-        position.addAssign(velocity.mul(dt60).mul(speedScale));
+        // Apply velocity to position, scaled by speedScale (friction/curve)
+        position.addAssign(velocity.mul(dt).mul(speedScale));
         
         // Plane collision detection
         If(uniforms.collisionEnabled.greaterThan(0.5), () => {
@@ -1226,8 +1233,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
         const rotSpeedY = mix(uniforms.rotationSpeedMinY, uniforms.rotationSpeedMaxY, hash(idx.add(9999)));
         const rotSpeedZ = mix(uniforms.rotationSpeedMinZ, uniforms.rotationSpeedMaxZ, hash(idx.add(10101)));
         
-        // Apply rotation speed (radians/second * deltaTime)
-        particleRotation.addAssign(vec3(rotSpeedX, rotSpeedY, rotSpeedZ).mul(uniforms.deltaTime));
+        // Sample rotation speed curve from A channel (R=size, G=opacity, B=velocity, A=rotSpeed)
+        const rotSpeedCurveSample = texture(curveTexture, vec2(progress, float(0.5))).w;
+        const rotSpeedMultiplier = uniforms.rotationSpeedCurveEnabled.greaterThan(0.5).select(
+          rotSpeedCurveSample,
+          float(1)
+        );
+        
+        // Apply rotation speed (radians/second * deltaTime * curve multiplier)
+        particleRotation.addAssign(vec3(rotSpeedX, rotSpeedY, rotSpeedZ).mul(uniforms.deltaTime).mul(rotSpeedMultiplier));
         
         // fadeRate is per-second, multiply by actual deltaTime
         lifetime.subAssign(fadeRate.mul(uniforms.deltaTime));
@@ -1899,7 +1913,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
       // Update velocity curve enabled uniform
       uniforms.velocityCurveEnabled.value = newValues.velocityCurve ? 1 : 0;
     }
-    
+    if ('rotationSpeedCurve' in newValues) {
+      setActiveRotationSpeedCurve(newValues.rotationSpeedCurve);
+      // Update rotation speed curve enabled uniform
+      uniforms.rotationSpeedCurveEnabled.value = newValues.rotationSpeedCurve ? 1 : 0;
+    }
+
     // Orient axis
     if ('orientAxis' in newValues) {
       uniforms.orientAxisType.value = axisToNumber(newValues.orientAxis);
@@ -2191,6 +2210,7 @@ export const VFXParticles = forwardRef(function VFXParticles(
       appearance,
       rotation,
       rotationSpeed,
+      rotationSpeedCurve: rotationSpeedCurve || null, // null = constant speed (no curve)
       orientToDirection,
       orientAxis,
       stretchBySpeed: stretchBySpeed || null,
