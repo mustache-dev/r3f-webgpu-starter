@@ -302,6 +302,7 @@ export const Particles = () => {
         ]}
       /> */}
 <VFXParticles
+debug
   geometry={new BoxGeometry(1.1, 1.1, 9.8, 1, 1, 1)}
   maxParticles={800}
   position={[0, 0, 0]}
