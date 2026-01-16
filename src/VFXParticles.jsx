@@ -577,6 +577,10 @@ export const VFXParticles = forwardRef(function VFXParticles(
       velocityCurveEnabled: uniform(velocityCurve ? 1 : 0),
       // Rotation speed curve (modulates rotation speed over lifetime)
       rotationSpeedCurveEnabled: uniform(rotationSpeedCurve ? 1 : 0),
+      // Fade size curve (when disabled, uses fadeSize prop interpolation)
+      fadeSizeCurveEnabled: uniform(fadeSizeCurve ? 1 : 0),
+      // Fade opacity curve (when disabled, uses fadeOpacity prop interpolation)
+      fadeOpacityCurveEnabled: uniform(fadeOpacityCurve ? 1 : 0),
       // Orient axis: 0=+X, 1=+Y, 2=+Z, 3=-X, 4=-Y, 5=-Z
       orientAxisType: uniform(axisToNumber(orientAxis)),
       // Stretch by speed (uses effective velocity after curve modifier)
@@ -598,8 +602,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
   // Store position prop for use in spawn
   const positionRef = useRef(position);
   
-  // Update all uniforms when props change
+  // Update all uniforms when props change (skip in debug mode - debug panel handles this)
   useEffect(() => {
+    // In debug mode, the debug panel controls uniform values via handleDebugUpdate
+    // Skip this effect to avoid overwriting user changes from the panel
+    if (debug) return;
+    
     positionRef.current = position;
     
     // Size
@@ -714,9 +722,15 @@ export const VFXParticles = forwardRef(function VFXParticles(
     
     // Velocity curve (when enabled, overrides friction)
     uniforms.velocityCurveEnabled.value = velocityCurve ? 1 : 0;
-    
+
     // Rotation speed curve
     uniforms.rotationSpeedCurveEnabled.value = rotationSpeedCurve ? 1 : 0;
+    
+    // Fade size curve (when enabled, uses curve instead of fadeSize prop)
+    uniforms.fadeSizeCurveEnabled.value = fadeSizeCurve ? 1 : 0;
+    
+    // Fade opacity curve (when enabled, uses curve instead of fadeOpacity prop)
+    uniforms.fadeOpacityCurveEnabled.value = fadeOpacityCurve ? 1 : 0;
 
     // Orient axis
     uniforms.orientAxisType.value = axisToNumber(orientAxis);
@@ -734,11 +748,11 @@ export const VFXParticles = forwardRef(function VFXParticles(
     uniforms.collisionDie.value = collision?.die ? 1 : 0;
     uniforms.sizeBasedGravity.value = collision?.sizeBasedGravity ?? 0;
   }, [
-    position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, frictionIntensityRange, frictionEasingType,
+    debug, position, sizeRange, fadeSizeRange, fadeOpacityRange, gravity, frictionIntensityRange, frictionEasingType,
     speedRange, lifetimeRange, direction3D, rotation3D, rotationSpeed3D,
     intensity, colorStart, effectiveColorEnd, startColors, endColors, uniforms, collision,
     emitterShape, emitterRadiusRange, emitterAngle, emitterHeightRange, emitterSurfaceOnly, emitterDirection,
-    turbulence, startPosition3D, attractors, attractToCenter, startPositionAsDirection, softParticles, softDistance, velocityCurve, rotationSpeedCurve, orientAxis, stretchBySpeed
+    turbulence, startPosition3D, attractors, attractToCenter, startPositionAsDirection, softParticles, softDistance, velocityCurve, rotationSpeedCurve, fadeSizeCurve, fadeOpacityCurve, orientAxis, stretchBySpeed
   ]);
 
   // GPU Storage arrays
@@ -1269,12 +1283,22 @@ export const VFXParticles = forwardRef(function VFXParticles(
     const currentColor = mix(pColorStart, pColorEnd, progress);
     const intensifiedColor = currentColor.mul(uniforms.intensity);
     
-    // Sample combined curve texture (R=size, G=opacity, B=velocity)
+    // Sample combined curve texture (R=size, G=opacity, B=velocity, A=rotSpeed)
     // Each channel contains the DIRECT value at the given progress (not an interpolation factor)
     // Curve Y-value IS the actual multiplier: 0=none, 1=full
     const curveSample = texture(curveTexture, vec2(progress, float(0.5)));
-    const sizeMultiplier = curveSample.x;     // R channel - size curve value
-    const opacityMultiplier = curveSample.y;  // G channel - opacity curve value
+    
+    // Size multiplier: use curve if enabled, otherwise interpolate fadeSize prop
+    const sizeMultiplier = uniforms.fadeSizeCurveEnabled.greaterThan(0.5).select(
+      curveSample.x,  // R channel - size curve value
+      mix(uniforms.fadeSizeStart, uniforms.fadeSizeEnd, progress)  // Linear interpolation of fadeSize
+    );
+    
+    // Opacity multiplier: use curve if enabled, otherwise interpolate fadeOpacity prop
+    const opacityMultiplier = uniforms.fadeOpacityCurveEnabled.greaterThan(0.5).select(
+      curveSample.y,  // G channel - opacity curve value
+      mix(uniforms.fadeOpacityStart, uniforms.fadeOpacityEnd, progress)  // Linear interpolation of fadeOpacity
+    );
     // B channel (velocity) is used in compute shader
     
     // Calculate UV - with flipbook support
@@ -1904,9 +1928,13 @@ export const VFXParticles = forwardRef(function VFXParticles(
     // Only set if the key exists (to allow clearing curves by setting to null)
     if ('fadeSizeCurve' in newValues) {
       setActiveFadeSizeCurve(newValues.fadeSizeCurve);
+      // Update fade size curve enabled uniform
+      uniforms.fadeSizeCurveEnabled.value = newValues.fadeSizeCurve ? 1 : 0;
     }
     if ('fadeOpacityCurve' in newValues) {
       setActiveFadeOpacityCurve(newValues.fadeOpacityCurve);
+      // Update fade opacity curve enabled uniform
+      uniforms.fadeOpacityCurveEnabled.value = newValues.fadeOpacityCurve ? 1 : 0;
     }
     if ('velocityCurve' in newValues) {
       setActiveVelocityCurve(newValues.velocityCurve);

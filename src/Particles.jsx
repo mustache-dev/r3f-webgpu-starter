@@ -155,6 +155,53 @@ export const Particles = () => {
 
   return (
     <group>
+<VFXParticles
+debug
+  geometry={new BoxGeometry(1, 1, 1, 1, 1, 1)}
+  maxParticles={100}
+  position={[0, 0, 0]}
+  delay={0.5}
+  size={[0.29, 0.29]}
+  fadeSize={[1, 1]}
+  colorStart={["#ffffff"]}
+  fadeOpacity={[1, 0]}
+  gravity={[0, 0, 0]}
+  speed={[10, 10]}
+  lifetime={[1, 2]}
+  velocityCurve={{
+    points: [
+      {
+        pos: [0, 0],
+        handleOut: [0.9717337280273439, 0.004709008789062502]
+      },
+      {
+        pos: [1, 1],
+        handleIn: [-0.06904875974416833, -0.3226953188036544]
+      }
+    ]
+  }}
+  direction={[[0, 0], [-1, -1], [0, 0]]}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  appearance="gradient"
+  blending={1}
+  lighting="standard"
+  emitterShape={1}
+  emitterRadius={[0, 1]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
+  collision={{
+    plane: {
+      y: -1
+    },
+    bounce: 0,
+    friction: 0.8,
+    die: false,
+    sizeBasedGravity: 0
+  }}
+/>
       {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
@@ -301,119 +348,14 @@ export const Particles = () => {
           [0, Math.PI * 2],
         ]}
       /> */}
-<VFXParticles
-  geometry={new BoxGeometry(1.1, 1.1, 9.8, 1, 1, 1)}
-  maxParticles={800}
-  position={[0, 0, 0]}
-  emitCount={100}
-  delay={0.5}
-  intensity={5}
-  size={[0.1, 0.3]}
-  fadeSize={[1, 0]}
-  colorStart={["#ff0000", "#ff7b00", "#ffd500"]}
-  fadeOpacity={[1, 0]}
-  fadeOpacityCurve={{
-    points: [
-      {
-        pos: [0, 1],
-        handleOut: [0.3178994848912838, -0.6026627560301504]
-      },
-      {
-        pos: [1, 0],
-        handleIn: [-0.6853281637705365, 0.03113403190890999]
-      }
-    ]
-  }}
-  gravity={[0, 0, 0]}
-  speed={[1.2, 1.2]}
-  lifetime={[0.6, 0.6]}
-  velocityCurve={{
-    points: [
-      {
-        pos: [0, 0],
-        handleOut: [0, 0]
-      },
-      {
-        pos: [1, 1],
-        handleIn: [-0.9768463134765625, 0.004474334716796813]
-      }
-    ]
-  }}
-  startPosition={[[-1, 1], [-1, 1], [-1, 1]]}
-  startPositionAsDirection={true}
-  rotation={[0, 0]}
-  rotationSpeed={[[-20, 20], [-20, 20], [-20, 20]]}
-  rotationSpeedCurve={{
-    points: [
-      {
-        pos: [0, 1],
-        handleOut: [0.016755580028081127, -0.32957434751194237]
-      },
-      {
-        pos: [1, 0],
-        handleIn: [-0.6132060000000001, 7.509607651179521e-17]
-      }
-    ]
-  }}
-  appearance="gradient"
-  blending={2}
-  lighting="basic"
-  emitterShape={1}
-  emitterRadius={[0, 1]}
-  emitterAngle={0.7853981633974483}
-  emitterHeight={[0, 1]}
-  emitterDirection={[0, 1, 0]}
-/>
+
       {/* START POSITION AS DIRECTION demo - burst/explosion effect */}
       {/* Particles spawn in a sphere and move outward in the direction of their spawn offset */}
-      <VFXParticles
-        autoStart={true}
-        maxParticles={500}
-        position={[5, 0, 0]}
-        size={[0.1, 0.25]}
-        delay={1}
-        emitCount={100}
-        colorStart={["#ff00ff", "#00ffff", "#ffff00", "#ff6600"]}
-        colorEnd={["#660066", "#006666", "#666600", "#663300"]}
-        fadeSize={[1, 0.2]}
-        fadeOpacity={[1, 0]}
-        gravity={[0, -2, 0]}
-        lifetime={2}
-        speed={[0.01, 1]}
-        appearance={Appearance.CIRCULAR}
-        intensity={5}
-        blending={Blending.ADDITIVE}
-        // KEY FEATURE: spawn in a sphere, move outward in spawn direction
-        emitterShape={EmitterShape.DISK}
-        emitterRadius={[0.3, 1]}
-        startPositionAsDirection={true}
-      />
+      
 
       {/* Comparison: Same setup WITHOUT startPositionAsDirection */}
       {/* This one uses random directions instead */}
-      <VFXParticles
-        autoStart={true}
-        maxParticles={500}
-        position={[-5, 0, 0]}
-        size={[0.1, 0.25]}
-        delay={1}
-        emitCount={100}
-        colorStart={["#00ff88", "#88ff00", "#00ff00"]}
-        colorEnd={["#006644", "#446600", "#004400"]}
-        fadeSize={[1, 0.2]}
-        fadeOpacity={[1, 0]}
-        gravity={[0, 0, 0]}
-        lifetime={[1.5, 2.5]}
-        speed={[0.08, 1.15]}
-        appearance={Appearance.CIRCULAR}
-        intensity={5}
-        blending={Blending.ADDITIVE}
-        // Same sphere emitter but with random directions
-        emitterShape={EmitterShape.SPHERE}
-        emitterRadius={[0.3, 1]}
-        direction={[[-1, 1], [-1, 1], [-1, 1]]}
-        // startPositionAsDirection is OFF (default) - random directions
-      />
+     
 
 {/*       <VFXParticles
       <VFXParticles
