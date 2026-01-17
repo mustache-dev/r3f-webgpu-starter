@@ -1788,10 +1788,12 @@ export const VFXParticles = forwardRef(function VFXParticles(
 
     nextIndex.current = endIdx;
     
-    // Run compute and restore original values
-    renderer.computeAsync(computeSpawn).then(() => {
-      if (restore) restore();
-    });
+    // Run compute - GPU reads uniforms when dispatched, so restore immediately
+    // This prevents race conditions when multiple emitters spawn in the same frame
+    renderer.computeAsync(computeSpawn);
+    
+    // Restore original values synchronously after dispatch
+    if (restore) restore();
   }, [renderer, computeSpawn, uniforms, activeMaxParticles, applySpawnOverrides]);
 
   // Public spawn - uses position prop as offset, supports overrides

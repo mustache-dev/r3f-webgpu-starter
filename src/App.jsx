@@ -8,6 +8,7 @@ import { WobblySphere } from "./WobblySphere";
 import { Floor } from "./Floor";
 import Player from "./Player";
 import { Particles } from "./Particles";
+import { Spark } from "./Spark";
 
 const keyboardMap = [
   { name: "forward", keys: ["ArrowUp", "KeyW"] },
@@ -37,6 +38,7 @@ export default function App() {
             <WebGPUPostProcessing />
             <Floor/>
             <Player/>
+            <Spark/>
             <Particles/>
             {/* <WobblySphere/> */}
           </Suspense>
