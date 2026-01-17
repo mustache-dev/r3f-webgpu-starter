@@ -173,7 +173,7 @@ export const Particles = () => {
       {/* <VFXParticles
         autoStart={true}
         maxParticles={100}
-        position={[-9, 0, 0]}
+        position={[0, 0, 0]}
         geometry={cherryBlossomPetalGeometry}
         size={[0.2, 0.3]}
         delay={0.1}
@@ -181,7 +181,7 @@ export const Particles = () => {
         colorStart={["#4A0E0E", "#ff0000", "#ffffff"]}
         fadeSize={1}
         fadeOpacity={[1, 0]}
-        gravity={[-0.2, 0.2, 0]}
+        gravity={[-1, 1, 0]}
         lifetime={4}
         direction={[[0, -0.5], [0, 0], [0, 0]]}
         startPosition={[[-0.3, 0.3], [-0.3, 0.3], [-0.3, 0.3]]}
@@ -195,15 +195,16 @@ export const Particles = () => {
         ]}
         intensity={1}
         rotationSpeed={[1, 3]}
+        castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.)}
         // orientToDirection={true}
         // intensity={10}
         // opacityNode={({progress}) => smoothstep(0, 0.9, progress.oneMinus())}
         // backdropNode={_distortionBackdrop}
-      /> */}
-       {/* <VFXParticles
+      />
+       <VFXParticles
         autoStart={true}
         maxParticles={1000}
-        position={[-9, 0, 0]}
+        position={[0, 0, 0]}
         geometry={new SphereGeometry(1, 32, 32)}
         size={0.5}
         delay={0.3}
@@ -211,18 +212,21 @@ export const Particles = () => {
         colorEnd={["#442200", "#221100"]}
         fadeSize={[0.3, 1]}
         fadeOpacity={[1, 1]}
-        gravity={[0, -0.1, 0]}
+        gravity={[0, -0.5, 0]}
         lifetime={2}
         direction={[[-1, 1], [0, 0], [-1, 1]]}
         startPosition={0}
-        speed={0.005}
+        speed={0.1}
         friction={1}
         shadow={true}
         // orientToDirection={true}
         // intensity={10}
+        softParticles={true}
+        softDistance={2}
         opacityNode={({ progress }) => smoothstep(0, 0.9, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
+      
       {/*
       <VFXParticles
         autoStart={true}
@@ -247,7 +251,7 @@ export const Particles = () => {
         opacityNode={({ progress }) => smoothstep(0, 0.1, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
-        <VFXParticles
+        {/* <VFXParticles
         autoStart={true}
         maxParticles={10}
         position={[0, 0, 0]}
@@ -270,7 +274,7 @@ export const Particles = () => {
         // intensity={10}
         colorNode={({progress}) => stylizedSphereBackdrop(({progress}))}
         castShadowNode={({color}) => vec4(color.x, color.y, color.z, 1.)}
-      /> 
+      />  */}
       {/*
       <VFXParticles
         autoStart={true}
@@ -485,6 +489,71 @@ export const Particles = () => {
   emitterDirection={[0, 1, 0]}
   attractToCenter={true}
   debug
+/> */}
+{/* <VFXParticles
+  geometry={new ConeGeometry(0.3, 3.2, 4, 1)}
+  maxParticles={1000}
+  position={[0, 0, 0]}
+  emitCount={100}
+  delay={1.78}
+  intensity={5.8}
+  size={[0.1, 0.4]}
+  fadeSize={[0, 1]}
+  fadeSizeCurve={{
+    points: [
+      {
+        pos: [0, 0],
+        handleOut: [0, 0]
+      },
+      {
+        pos: [1, 1],
+        handleIn: [-1.5437627513781673, -0.12376516518516154]
+      }
+    ]
+  }}
+  colorStart={["#ffa25b"]}
+  fadeOpacity={[1, 0]}
+  fadeOpacityCurve={{
+    points: [
+      {
+        pos: [0, 1],
+        handleOut: [0.70039794921875, -0.37296874999999996]
+      },
+      {
+        pos: [1, 0],
+        handleIn: [-0.10091957976483543, 0.31418981272487023]
+      }
+    ]
+  }}
+  gravity={[0, 0, 0]}
+  speed={[0.1, 2.63]}
+  lifetime={[0.4, 0.4]}
+  velocityCurve={{
+    points: [
+      {
+        pos: [0, 1],
+        handleOut: [0.02539794921875, -0.8136929321289063]
+      },
+      {
+        pos: [1, 0],
+        handleIn: [-0.687357, -8.417695499215272e-17]
+      }
+    ]
+  }}
+  startPosition={[[0, 0], [0, 0], [0, 0]]}
+  startPositionAsDirection={true}
+  rotation={[0, 0]}
+  rotationSpeed={[0, 0]}
+  orientToDirection={true}
+  orientAxis="y"
+  appearance="gradient"
+  blending={1}
+  lighting="standard"
+  emitterShape={2}
+  emitterRadius={[0, 0.77]}
+  emitterAngle={0.7853981633974483}
+  emitterHeight={[0, 1]}
+  emitterDirection={[0, 1, 0]}
 /> */}
 {/* <VFXParticles
 debug

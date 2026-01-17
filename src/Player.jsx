@@ -1,10 +1,11 @@
 import { useFrame } from "@react-three/fiber"
-import { useKeyboardControls, PerspectiveCamera, useTexture } from "@react-three/drei"
+import { useKeyboardControls, PerspectiveCamera } from "@react-three/drei"
 import { useRef } from "react"
 import { damp } from "three/src/math/MathUtils.js"
-import { Vector3, ClampToEdgeWrapping, LinearFilter, TextureLoader } from "three/webgpu"
+import { Vector3 } from "three/webgpu"
 import { Model } from "./Witch-test"
 import { Appearance, VFXParticles, Blending } from "./VFXParticles"
+import { VFXEmitter } from "./VFXEmitter"
 
 function Player() {
   const meshRef = useRef()
@@ -17,11 +18,6 @@ function Player() {
   
   const walkSpeed = 5
   const runSpeed = 10
-  const smokeRef = useRef()
-  const lastSmokeTime = useRef(0)
-  const SMOKE_THROTTLE_MS = 1000
-
-  const smokeTexture = new TextureLoader().load('./smoke.png')
 
   // Subscribe to keyboard controls
   const [, getKeys] = useKeyboardControls()
@@ -54,13 +50,6 @@ function Player() {
     // Update position
     meshRef.current.position.add(velocity.current)
     meshRef.current.position.y = -1.2
-    
-    // Throttled smoke spawn
-    const now = performance.now()
-    if (now - lastSmokeTime.current >= SMOKE_THROTTLE_MS) {
-      lastSmokeTime.current = now
-      smokeRef.current?.spawn(meshRef.current.position.x, meshRef.current.position.y + 2.5, meshRef.current.position.z + 2, 5)
-    }
 
     // Calculate rotation based on movement direction (top-down view)
     if (isMoving && modelRef.current) {
@@ -92,9 +81,52 @@ function Player() {
   return (<>
     <PerspectiveCamera makeDefault position={[0, 3, 10]} fov={45} rotation={[-Math.PI / 6, 0, 0]} ref={cameraRef}/>
 
+    {/* Shared VFXParticles system - single draw call for all emitters */}
+    <VFXParticles
+      name="playerTrail"
+      maxParticles={2000}
+      autoStart={false}
+      colorStart={["#ff6600", "#ffcc00", "#ff3300"]}
+      colorEnd={["#ff9900", "#ffaa00"]}
+      size={[0.05, 0.12]}
+      lifetime={[0.5, 1.2]}
+      speed={[2, 2]}
+      direction={[[0,0], [0.0, 0.], [-0.5, -1]]}
+      gravity={[0, -0.5, 0]}
+      fadeOpacity={[1, 0]}
+      fadeSize={[1, 0.2]}
+      appearance={Appearance.GRADIENT}
+      blending={Blending.ADDITIVE}
+    />
+
     <group ref={meshRef}>
       <group ref={modelRef}>
         <Model ref={modelAnimRef} />
+        
+        {/* VFXEmitter as child of model - follows player AND model rotation! */}
+        {/* Uses localDirection so particles emit backward relative to character facing */}
+        <VFXEmitter
+          name="playerTrail"
+          position={[0, 0.5, 0]}
+          direction={[[0, 0], [0, 0], [0.5, 1]]}
+          localDirection={true}
+          emitCount={3}
+          delay={0}
+          autoStart={true}
+          world={false}
+        />
+        
+        {/* Second emitter at different offset - also follows rotation */}
+        <VFXEmitter
+          name="playerTrail"
+          position={[0, 2, 0]}
+          direction={[[0, 0], [0, 0], [-1, -1]]}
+          localDirection={false}
+          emitCount={2}
+          delay={0}
+          autoStart={true}
+          world={false}
+        />
       </group>
     </group>
   </>)

@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle, useEffect, useRef, useMemo, useCallback, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three/webgpu";
+import { useVFXStore } from "./useVFXStore";
 import {
   Fn,
   If,
@@ -279,6 +280,7 @@ const toRotation3D = (value) => {
 
 export const VFXParticles = forwardRef(function VFXParticles(
   {
+    name, // Optional name for registering with useVFXStore (enables VFXEmitter linking)
     maxParticles = 10000,
     size = [0.1, 0.3],
     colorStart = ["#ffffff"],
@@ -1896,7 +1898,8 @@ export const VFXParticles = forwardRef(function VFXParticles(
   }, []);
 
   // Expose methods via ref
-  useImperativeHandle(ref, () => ({
+  // Create the API object that will be exposed via ref and registered with store
+  const particleAPI = useMemo(() => ({
     spawn,
     start,
     stop,
@@ -1907,6 +1910,24 @@ export const VFXParticles = forwardRef(function VFXParticles(
     },
     uniforms,
   }), [spawn, start, stop, emitting, renderer, computeInit, uniforms]);
+
+  useImperativeHandle(ref, () => particleAPI, [particleAPI]);
+
+  // Register with VFX store when name prop is provided
+  const registerParticles = useVFXStore((s) => s.registerParticles);
+  const unregisterParticles = useVFXStore((s) => s.unregisterParticles);
+  
+  useEffect(() => {
+    if (!name) return;
+    
+    // Register this particle system with the store
+    registerParticles(name, particleAPI);
+    
+    return () => {
+      // Unregister on unmount or name change
+      unregisterParticles(name);
+    };
+  }, [name, particleAPI, registerParticles, unregisterParticles]);
 
   // Debug panel - no React state, direct ref mutation
   const debugValuesRef = useRef(null);
