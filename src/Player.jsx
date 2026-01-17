@@ -77,39 +77,35 @@ function Player() {
 
     camera.position.x = damp(camera.position.x, meshRef.current.position.x, 4, delta)
     camera.position.z = damp(camera.position.z, meshRef.current.position.z + 5, 4, delta)
-    const {x, y, z} = meshRef.current.position
     emit(meshRef.current.position, 1)
   })
 
   return (<>
     <PerspectiveCamera makeDefault position={[0, 3, 10]} fov={45} rotation={[-Math.PI / 6, 0, 0]} ref={cameraRef}/>
 
-    {/* Shared VFXParticles system - single draw call for all emitters */}
-
-
-    <group ref={meshRef}>
-      <group ref={modelRef}>
-        <Model ref={modelAnimRef} />
-        <VFXParticles
+    {/* VFXParticles at scene root - NOT inside moving groups */}
+    <VFXParticles
       name="playerTrail"
       maxParticles={2000}
-      autoStart={true}
+      autoStart={false}
       colorStart={["#ff6600", "#ffcc00", "#ff3300"]}
       colorEnd={["#ff9900", "#ffaa00"]}
       size={[0.05, 0.12]}
       lifetime={[0.5, 1.2]}
       speed={[2, 10]}
-      direction={[[0,1.5], [0.0, 0.], [-0.5, -1]]}
+      direction={[[0, 1.5], [0, 0], [-0.5, -1]]}
       gravity={[0, -0.5, 0]}
       fadeOpacity={[1, 0]}
       fadeSize={[1, 0.2]}
       appearance={Appearance.GRADIENT}
       blending={Blending.ADDITIVE}
     />
+
+    <group ref={meshRef}>
+      <group ref={modelRef}>
+        <Model ref={modelAnimRef} />
         
-        {/* VFXEmitter as child of model - follows player AND model rotation! */}
-        {/* Uses localDirection so particles emit backward relative to character facing */}
-        {/* speed=0 via overrides - particles spawn but don't move */}
+        {/* VFXEmitters as children - follow player, emit into world-space VFXParticles */}
         <VFXEmitter
           name="playerTrail"
           position={[0, 0.5, 0]}
@@ -119,12 +115,10 @@ function Player() {
           delay={0}
           autoStart={true}
           overrides={{
-            speed: 10,  // Override: no initial velocity
+            speed: 10,
           }}
         />
         
-        {/* Second emitter at different offset - also follows rotation */}
-        {/* Different overrides: slower speed, different colors */}
         <VFXEmitter
           name="playerTrail"
           position={[0, 2, 0]}
@@ -134,7 +128,7 @@ function Player() {
           delay={0}
           autoStart={true}
           overrides={{
-            speed: -1,  // Override: no initial velocity
+            speed: [1, 2],
           }}
         />
       </group>
