@@ -15,7 +15,7 @@ function Player() {
   const targetRotation = useRef(0)
   const currentAnimation = useRef('idle-sword')
   const attackPressed = useRef(false)
-  const { emit } = useVFXEmitter('spark')
+  // const { emit } = useVFXEmitter('spark')
   
   const walkSpeed = 5
   const runSpeed = 10
@@ -77,14 +77,14 @@ function Player() {
 
     camera.position.x = damp(camera.position.x, meshRef.current.position.x, 4, delta)
     camera.position.z = damp(camera.position.z, meshRef.current.position.z + 5, 4, delta)
-    emit(meshRef.current.position, 1)
+    // emit(meshRef.current.position, 1)
   })
 
   return (<>
     <PerspectiveCamera makeDefault position={[0, 3, 10]} fov={45} rotation={[-Math.PI / 6, 0, 0]} ref={cameraRef}/>
 
     {/* VFXParticles at scene root - NOT inside moving groups */}
-    <VFXParticles
+    {/* <VFXParticles
       name="playerTrail"
       maxParticles={2000}
       autoStart={false}
@@ -99,14 +99,14 @@ function Player() {
       fadeSize={[1, 0.2]}
       appearance={Appearance.GRADIENT}
       blending={Blending.ADDITIVE}
-    />
+    /> */}
 
     <group ref={meshRef}>
       <group ref={modelRef}>
         <Model ref={modelAnimRef} />
         
         {/* VFXEmitters as children - follow player, emit into world-space VFXParticles */}
-        <VFXEmitter
+        {/* <VFXEmitter
           name="playerTrail"
           position={[0, 0.5, 0]}
           direction={[[0, 0], [0, 0], [0.5, 1]]}
@@ -130,7 +130,7 @@ function Player() {
           overrides={{
             speed: [1, 2],
           }}
-        />
+        /> */}
       </group>
     </group>
   </>)

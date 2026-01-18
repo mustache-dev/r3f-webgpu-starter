@@ -1,6 +1,12 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
-import { VFXParticles, Appearance, Blending, EmitterShape, Lighting } from "./VFXParticles";
+import {
+  VFXParticles,
+  Appearance,
+  Blending,
+  EmitterShape,
+  Lighting,
+} from "./VFXParticles";
 import {
   TextureLoader,
   BoxGeometry,
@@ -9,7 +15,10 @@ import {
   LinearFilter,
   ConeGeometry,
   DodecahedronGeometry,
-  Color
+  Color,
+  CapsuleGeometry,
+  MeshBasicNodeMaterial,
+  NearestFilter,
 } from "three/webgpu";
 import { useGLTF } from "@react-three/drei";
 import * as BufferGeometryUtils from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -43,14 +52,24 @@ import {
   mul,
   If,
   Discard,
+  Fn,
+  uv,
+  atan,
+  length,
+  PI2,
+  fract,
+  normalViewGeometry,
+  color,
 } from "three/tsl";
 
 export const Particles = () => {
   const swordParticlesRef = useRef();
   const smokeTexture = new TextureLoader().load("./2.png");
   const noiseTexture = new TextureLoader().load("./noise.png");
+  const tileTexture = new TextureLoader().load("./tile-2.png");
+  tileTexture.minFilter = tileTexture.magFilter = NearestFilter;
   const { nodes: cherryBlossomPetalNodes } = useGLTF(
-    "/cherry_blossom_petal-transformed.glb"
+    "/cherry_blossom_petal-transformed.glb",
   );
   const cherryBlossomPetalGeometry = useMemo(() => {
     const geo1 = cherryBlossomPetalNodes.Object_4.geometry;
@@ -67,9 +86,66 @@ export const Particles = () => {
     return geo1;
   }, [nodes]);
 
+  const impactRef = useRef();
   // Sphere geometry for bouncing balls
   const sphereGeometry = useMemo(() => {
     return new SphereGeometry(0.5, 16, 16);
+  }, []);
+
+  // const polarMat = useMemo(() => {
+  //   const mat = new MeshBasicNodeMaterial()
+  //     const fresnelPower = float(0.0);
+  //    const fresnelDot = max(
+  //     dot(normalize(positionViewDirection), normalize(normalView)),
+  //     float(0)
+  //   );
+  //   const fresnel = pow(float(1).sub(fresnelDot), fresnelPower);
+
+  //   const tile = texture(tileTexture, positionLocal.xy.mul(0.5).add(0.5));
+
+  //   mat.colorNode = vec4(vec3(tile), 1)
+
+  //   return mat;
+  // }, [])
+
+  useFrame(({ camera }) => {
+    impactRef.current.lookAt(camera.position);
+  });
+
+  const polarMat = useMemo(() => {
+    const mat = new MeshBasicNodeMaterial();
+    mat.transparent = true;
+
+    // const fresnelPower = float(3.0);
+    const orangeGlow = color("#ffa600").mul(20);
+
+    const fade = pow(normalGeometry.z.oneMinus(), 0.5);
+
+    const progress = time.mod(1);
+
+    const vUv = positionLocal.xy.mul(0.5).add(0.5);
+
+    const centeredUv = vUv.sub(0.5);
+    const angle = atan(centeredUv.y, centeredUv.x);
+    const radius = length(centeredUv);
+
+    const invRadius = radius.oneMinus();
+    const warpedRadius = pow(radius, float(1));
+
+    const speed = float(0.3);
+    const radialPhase = warpedRadius.sub(time.mul(speed));
+    const animatedRadius = fract(radialPhase);
+
+    const normalizedAngle = angle.add(Math.PI).div(PI2).add(time.mul(0));
+
+    const fracAngle = fract(normalizedAngle.mul(6));
+
+    const polarUv = vec2(fracAngle, animatedRadius);
+    const tile = texture(tileTexture, polarUv);
+
+    mat.colorNode = vec4(orangeGlow, tile.r.sub(fade));
+
+    return mat;
   }, []);
 
   const distortionBackdrop = ({ progress }) => {
@@ -83,7 +159,7 @@ export const Particles = () => {
 
     const fresnelDot = max(
       dot(normalize(positionViewDirection), normalize(normalView)),
-      float(0)
+      float(0),
     );
     const fresnel = pow(float(1).sub(fresnelDot), fresnelPower);
 
@@ -107,21 +183,21 @@ export const Particles = () => {
   const triplanar = ({ position, normal, scale = 1.0, map }) => {
     const pos = position.mul(scale);
     const n = abs(normal);
-    
+
     // Blend weights (raised to power for sharper blending)
     const weights = pow(n, vec3(4.0));
     const blend = weights.div(weights.x.add(weights.y).add(weights.z));
-    
+
     // Sample texture from 3 projections
     const texX = texture(map, pos.yz);
     const texY = texture(map, pos.xz);
     const texZ = texture(map, pos.xy);
-    
+
     // Weighted blend
     return texX.mul(blend.x).add(texY.mul(blend.y)).add(texZ.mul(blend.z));
   };
 
-  const stylizedSphereBackdrop = ({progress}) => {
+  const stylizedSphereBackdrop = ({ progress }) => {
     // Fresnel: 0 at center, 1 at edges (inverted from before)
 
     // const normalTarget = vec3(0, 1, 0);
@@ -154,19 +230,17 @@ export const Particles = () => {
     // // Multiply by fresnel to only show at edges
     // const finalColor = mix(color, purpleBlueGlow.mul(4), fresnel); // Boost intensity
 
-    const color = texture(noiseTexture, positionLocal.xy.sub(time))
+    const color = texture(noiseTexture, positionLocal.xy.sub(time));
 
     Discard(progress.greaterThanEqual(0.3));
-    
-    
-    const finalColor = vec4(vec3(progress), 1.);
+
+    const finalColor = vec4(vec3(progress), 1);
 
     return finalColor;
   };
 
   // Spawn swords at 4 uniform positions, all emitting in the same direction
   const spawnAccumulator = useRef(0);
-
 
   return (
     <group>
@@ -226,7 +300,7 @@ export const Particles = () => {
         opacityNode={({ progress }) => smoothstep(0, 0.9, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
-      
+
       {/*
       <VFXParticles
         autoStart={true}
@@ -251,7 +325,7 @@ export const Particles = () => {
         opacityNode={({ progress }) => smoothstep(0, 0.1, progress.oneMinus())}
         backdropNode={distortionBackdrop}
       /> */}
-        {/* <VFXParticles
+      {/* <VFXParticles
         autoStart={true}
         maxParticles={10}
         position={[0, 0, 0]}
@@ -324,13 +398,11 @@ export const Particles = () => {
 
       {/* START POSITION AS DIRECTION demo - burst/explosion effect */}
       {/* Particles spawn in a sphere and move outward in the direction of their spawn offset */}
-      
 
       {/* Comparison: Same setup WITHOUT startPositionAsDirection */}
       {/* This one uses random directions instead */}
-     
 
-{/*       <VFXParticles
+      {/*       <VFXParticles
       <VFXParticles
         autoStart={true}
         maxParticles={500}
@@ -459,7 +531,7 @@ export const Particles = () => {
   }}
 /> */}
 
-{/* <VFXParticles
+      {/* <VFXParticles
   position={[-2.6, 0, 0]}
   delay={0.12}
   intensity={3.1}
@@ -490,7 +562,7 @@ export const Particles = () => {
   attractToCenter={true}
   debug
 /> */}
-{/* <VFXParticles
+      {/* <VFXParticles
   geometry={new ConeGeometry(0.3, 3.2, 4, 1)}
   maxParticles={1000}
   position={[0, 0, 0]}
@@ -555,7 +627,7 @@ export const Particles = () => {
   emitterHeight={[0, 1]}
   emitterDirection={[0, 1, 0]}
 /> */}
-{/* <VFXParticles
+      {/* <VFXParticles
 debug
   maxParticles={100}
   position={[0, 0, 0]}
@@ -727,6 +799,66 @@ debug
           speed: 0.1
         }}
       /> */}
+      <VFXParticles
+        geometry={new CapsuleGeometry(0.25, 1.4, 2, 7)}
+        maxParticles={100}
+        position={[0, 0, 0]}
+        emitCount={10}
+        delay={0.5}
+        size={[0.05, 0.07]}
+        fadeSize={[1, 0]}
+        colorStart={["#65ffe8"]}
+        fadeOpacity={[1, 0]}
+        gravity={[0, 0, 0]}
+        speed={[4.01, 4.01]}
+        lifetime={[0.67, 0.67]}
+        velocityCurve={{
+          points: [
+            {
+              pos: [0, 1],
+              handleOut: [0, 0],
+            },
+            {
+              pos: [1, 0],
+              handleIn: [-0.8525999999999999, 1.0441338609530333e-16],
+            },
+          ],
+        }}
+        direction={[
+          [-1, 1],
+          [-1, 1],
+          [-1, 1],
+        ]}
+        startPosition={[
+          [0, 0],
+          [0, 0],
+          [0, 0],
+        ]}
+        rotation={[0, 0]}
+        rotationSpeed={[0, 0]}
+        orientToDirection={true}
+        orientAxis="y"
+        stretchBySpeed={{
+          factor: 4.7,
+          maxStretch: 1.8,
+        }}
+        appearance="gradient"
+        blending={2}
+        lighting="basic"
+        emitterShape={1}
+        emitterRadius={[0, 1]}
+        emitterAngle={0.7853981633974483}
+        emitterHeight={[0, 1]}
+        emitterDirection={[0, 1, 0]}
+        turbulence={{
+          intensity: 3.83,
+          frequency: 5.35,
+          speed: 0.55,
+        }}
+      />
+      <mesh material={polarMat} ref={impactRef}>
+        <torusGeometry args={[0.5, 0.5, 16, 64]} />
+      </mesh>
 
       {/* DISK emitter - ground smoke/portal effect */}
       {/* <VFXParticles
@@ -869,7 +1001,7 @@ debug
         //   speed: 0.5
         // }}
       /> */}
-{/* 
+      {/* 
       <VFXParticles
         autoStart={true}
         maxParticles={300}
